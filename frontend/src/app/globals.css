@@ -1,0 +1,297 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===================================================
+   CSS Custom Properties â€” Light Theme
+   =================================================== */
+@layer base {
+  :root {
+    /* shadcn/ui base */
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+
+    /* Brand primary: blue (matches billing + chrome accents) */
+    --primary: 221 83% 53%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+
+    --accent: 214 95% 93%;
+    --accent-foreground: 221 83% 33%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 221 83% 53%;
+
+    --radius: 0.5rem;
+
+    /* Pharmacy-specific palette */
+    --pharmacy-green: 168 72% 36%;
+    --pharmacy-green-light: 168 55% 92%;
+    --pharmacy-blue: 210 80% 46%;
+    --pharmacy-blue-light: 210 60% 94%;
+    --pharmacy-orange: 30 90% 52%;
+    --pharmacy-orange-light: 30 80% 93%;
+    --pharmacy-red: 0 78% 54%;
+    --pharmacy-red-light: 0 80% 94%;
+    --pharmacy-purple: 270 60% 52%;
+    --pharmacy-purple-light: 270 55% 94%;
+
+    /* Sidebar */
+    --sidebar-width: 240px;
+    --sidebar-collapsed-width: 64px;
+    --topbar-height: 60px;
+  }
+
+  /* ===================================================
+     Dark Theme
+     =================================================== */
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+
+    --accent: 222 47% 20%;
+    --accent-foreground: 213 94% 78%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 217 91% 60%;
+
+    /* Pharmacy dark palette */
+    --pharmacy-green: 168 60% 46%;
+    --pharmacy-green-light: 168 30% 15%;
+    --pharmacy-blue: 210 70% 55%;
+    --pharmacy-blue-light: 210 40% 15%;
+    --pharmacy-orange: 30 80% 60%;
+    --pharmacy-orange-light: 30 40% 15%;
+    --pharmacy-red: 0 68% 60%;
+    --pharmacy-red-light: 0 40% 15%;
+    --pharmacy-purple: 270 55% 62%;
+    --pharmacy-purple-light: 270 35% 15%;
+  }
+}
+
+/* ===================================================
+   Base Styles
+   =================================================== */
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-semibold tracking-tight;
+  }
+
+  /* Focus ring */
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+}
+
+/* ===================================================
+   Scrollbar Customization
+   =================================================== */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: hsl(var(--muted));
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border)) hsl(var(--muted));
+}
+
+/* ===================================================
+   Layout Helpers
+   =================================================== */
+.sidebar {
+  width: var(--sidebar-width);
+  transition: width 0.2s ease;
+}
+
+.sidebar.collapsed {
+  width: var(--sidebar-collapsed-width);
+}
+
+.main-content {
+  margin-left: var(--sidebar-width);
+  padding-top: var(--topbar-height);
+  transition: margin-left 0.2s ease;
+}
+
+.main-content.sidebar-collapsed {
+  margin-left: var(--sidebar-collapsed-width);
+}
+
+/* ===================================================
+   Print Styles
+   =================================================== */
+@media print {
+  /* Hide navigation chrome */
+  .sidebar,
+  .topbar,
+  nav,
+  [data-sidebar],
+  [data-topbar],
+  .no-print,
+  button:not(.print-button) {
+    display: none !important;
+  }
+
+  /* Reset page layout */
+  body {
+    background: white !important;
+    color: black !important;
+    margin: 0;
+    padding: 0;
+  }
+
+  .main-content {
+    margin-left: 0 !important;
+    padding-top: 0 !important;
+  }
+
+  /* Print-only content */
+  .print-only {
+    display: block !important;
+  }
+
+  /* Page breaks */
+  .page-break-before {
+    page-break-before: always;
+  }
+
+  .page-break-after {
+    page-break-after: always;
+  }
+
+  .no-page-break {
+    page-break-inside: avoid;
+  }
+
+  /* Table print fixes */
+  table {
+    border-collapse: collapse !important;
+  }
+
+  th, td {
+    border: 1px solid #999 !important;
+    padding: 4px 8px !important;
+    color: black !important;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+}
+
+/* Hide print-only elements on screen */
+@media screen {
+  .print-only {
+    display: none;
+  }
+}
+
+/* ===================================================
+   Utility Classes
+   =================================================== */
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .animate-in {
+    animation: fadeIn 0.15s ease-in;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Status indicators */
+  .status-active  { @apply inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900/30 dark:text-green-400; }
+  .status-inactive { @apply inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-700 dark:bg-gray-800 dark:text-gray-400; }
+  .status-expiring { @apply inline-flex items-center rounded-full bg-orange-100 px-2.5 py-0.5 text-xs font-medium text-orange-800 dark:bg-orange-900/30 dark:text-orange-400; }
+  .status-expired  { @apply inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-800 dark:bg-red-900/30 dark:text-red-400; }
+
+  /* Login page gradient background */
+  .pharmacy-gradient {
+    background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 30%, #1d4ed8 60%, #2563eb 100%);
+  }
+
+  /* Caret blink animation for OTP input */
+  @keyframes caret-blink {
+    0%, 70%, 100% { opacity: 1; }
+    20%, 50%      { opacity: 0; }
+  }
+  .animate-caret-blink {
+    animation: caret-blink 1.2s ease-out infinite;
+  }
+}
+
+/* Hide number-input spin buttons (up/down steppers) app-wide */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}

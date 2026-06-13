@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+**/.env
+!.env.example
+
+# Next.js / build output
+.next/
+**/.next/
+out/
+**/dist/
+**/build/
+
+# Logs
+*.log
+dev-server.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Prisma generated
+**/prisma/generated/
+
+# Misc
+.DS_Store
+Thumbs.db
+*.tsbuildinfo
+.vscode/
+.idea/
+coverage/
+
+# Seed logs / temp
+backend/prisma/seed-data/seed.log
+backend/cleanup-test.cjs
+
+# Google OAuth / API credentials
+gmail_token.json
+**/gmail_token.json
+credentials.json
+**/credentials.json
+client_secret*.json

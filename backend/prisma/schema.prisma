@@ -1,0 +1,824 @@
+// =============================================================================
+// PHARMACY ERP - PRISMA SCHEMA
+// =============================================================================
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearch", "fullTextIndex"]
+  binaryTargets   = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_DIRECT_URL")
+}
+
+// =============================================================================
+// ENUMS
+// =============================================================================
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  PHARMACIST
+  CASHIER
+  INVENTORY_MANAGER
+  VIEWER
+}
+
+enum ScheduleType {
+  H         // Habit forming
+  H1        // Special habit forming
+  X         // Prohibited
+  G         // General (OTC)
+  OTC       // Over the counter
+  PRESCRIPTION_ONLY
+  CONTROLLED
+}
+
+enum MedicineCategory {
+  TABLET
+  CAPSULE
+  SYRUP
+  INJECTION
+  CREAM
+  OINTMENT
+  GEL
+  DROPS
+  INHALER
+  PATCH
+  SUPPOSITORY
+  POWDER
+  GRANULES
+  SUSPENSION
+  SOLUTION
+  LOTION
+  SPRAY
+  DEVICE
+  SURGICAL
+  DIAGNOSTIC
+  NUTRACEUTICAL
+  HERBAL
+  HOMEOPATHIC
+  AYURVEDIC
+  VETERINARY
+  OTHER
+}
+
+enum PaymentStatus {
+  PENDING
+  PARTIAL
+  PAID
+  OVERDUE
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  UPI
+  NET_BANKING
+  CHEQUE
+  CREDIT
+  INSURANCE
+  WALLET
+  EMI
+}
+
+enum PurchaseStatus {
+  DRAFT
+  RECEIVED
+  PARTIAL_RECEIVED
+  CANCELLED
+  RETURNED
+}
+
+enum SaleStatus {
+  DRAFT
+  COMPLETED
+  CANCELLED
+  REFUNDED
+  PARTIAL_REFUND
+}
+
+enum AdjustmentType {
+  DAMAGE
+  EXPIRY
+  THEFT
+  OPENING_STOCK
+  CORRECTION
+  TRANSFER_IN
+  TRANSFER_OUT
+  RETURN_TO_SUPPLIER
+  SAMPLE
+  OTHER
+}
+
+enum LoyaltyTransactionType {
+  EARNED
+  REDEEMED
+  EXPIRED
+  ADJUSTED
+  BONUS
+  REVERSED
+}
+
+enum PaymentType {
+  PURCHASE_PAYMENT
+  SALE_RECEIPT
+  EXPENSE
+  REFUND
+  ADVANCE
+  ADJUSTMENT
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  PREFER_NOT_TO_SAY
+}
+
+enum BloodGroup {
+  A_POSITIVE
+  A_NEGATIVE
+  B_POSITIVE
+  B_NEGATIVE
+  AB_POSITIVE
+  AB_NEGATIVE
+  O_POSITIVE
+  O_NEGATIVE
+  UNKNOWN
+}
+
+enum PrescriptionStatus {
+  PENDING
+  VERIFIED
+  DISPENSED
+  PARTIALLY_DISPENSED
+  EXPIRED
+  REJECTED
+}
+
+// =============================================================================
+// MODELS
+// =============================================================================
+
+/// Stores represent individual pharmacy branches or locations
+model Store {
+  id            String   @id @default(cuid())
+  name          String
+  address       String
+  city          String   @default("")
+  state         String   @default("")
+  pincode       String   @default("")
+  phone         String
+  email         String   @unique
+  gstin         String?  @unique
+  licenseNumber String   @unique @map("license_number")
+  dlNumber      String?  @map("dl_number")        // Drug License Number
+  fssaiNumber   String?  @map("fssai_number")
+  panNumber     String?  @map("pan_number")
+  logoUrl       String?  @map("logo_url")
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  users            User[]
+  medicineBatches  MedicineBatch[]
+  purchases        Purchase[]
+  sales            Sale[]
+  stockAdjustments StockAdjustment[]
+
+  @@map("stores")
+}
+
+/// System users - pharmacists, admins, cashiers etc.
+model User {
+  id                 String    @id @default(cuid())
+  name               String
+  email              String    @unique
+  password           String
+  role               Role      @default(CASHIER)
+  storeId            String?   @map("store_id")
+  phone              String?
+  avatarUrl          String?   @map("avatar_url")
+  isActive           Boolean   @default(true) @map("is_active")
+  isEmailVerified    Boolean   @default(false) @map("is_email_verified")
+  twoFactorEnabled   Boolean   @default(false) @map("two_factor_enabled")
+  twoFactorSecret    String?   @map("two_factor_secret")
+  twoFactorBackupCodes String[] @map("two_factor_backup_codes")
+  lastLoginAt        DateTime? @map("last_login_at")
+  lastLoginIp        String?   @map("last_login_ip")
+  passwordChangedAt  DateTime? @map("password_changed_at")
+  passwordResetToken String?   @map("password_reset_token")
+  passwordResetExpiry DateTime? @map("password_reset_expiry")
+  emailVerifyToken   String?   @map("email_verify_token")
+  refreshTokens      String[]  @map("refresh_tokens")
+  loginAttempts      Int       @default(0) @map("login_attempts")
+  lockedUntil        DateTime? @map("locked_until")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  store         Store?         @relation(fields: [storeId], references: [id])
+  sales         Sale[]
+  auditLogs     AuditLog[]
+  workspaceTabs WorkspaceTab[]
+
+  @@index([email])
+  @@index([storeId])
+  @@map("users")
+}
+
+/// Medicine master catalog
+model Medicine {
+  id                   String          @id @default(cuid())
+  name                 String
+  itemType             String          @default("medicine") @map("item_type")  // "general" | "medicine"
+  genericName          String?         @map("generic_name")
+  saltComposition      String?         @map("salt_composition")
+  manufacturer         String?         // shown as "Company" in the UI
+  companyCode          String?         @map("company_code")
+  category             String          @default("allopathy")  // system of medicine (allopathy/homeopathy/ayurvedic…)
+  categoryCode         String?         @map("category_code")
+  productCode          Int?            @unique @map("product_code")  // incremental product code
+  genericCode          Int?            @map("generic_code")          // generic-group code
+  stockId              String?         @map("stock_id")              // filled when a barcode is generated
+  scheduleType         ScheduleType    @default(OTC) @map("schedule_type")
+  looseQtyFactor       Int             @default(1) @map("loose_qty_factor")  // loose units per pack
+  packing              String?         // free-text packaging, e.g. "10x10"
+  hsnCode              String?         @map("hsn_code")
+  gstRate              Decimal         @default(12) @db.Decimal(5, 2) @map("gst_rate")
+  barcode              String?         @unique
+  sku                  String?         @unique
+  mrp                  Decimal         @db.Decimal(10, 2)
+  purchaseRate         Decimal         @db.Decimal(10, 2) @map("purchase_rate")
+  saleRate             Decimal         @db.Decimal(10, 2) @map("sale_rate")
+  margin               Decimal         @default(0) @db.Decimal(5, 2)
+  unitsPerPack         Int             @default(1) @map("units_per_pack")
+  stripQty             Int             @default(1) @map("strip_qty")   // strips per box
+  boxQty               Int             @default(1) @map("box_qty")
+  storageInstructions  String?         @map("storage_instructions")
+  sideEffects          String?         @map("side_effects")
+  contraindications    String?         @map("contraindications")
+  drugInteractions     String?         @map("drug_interactions")
+  dosageInstructions   String?         @map("dosage_instructions")
+  minLevel             Int?            @map("min_level")
+  maxLevel             Int?            @map("max_level")
+  reorderLevel         Int?            @map("reorder_level")
+  isPrescriptionRequired Boolean       @default(false) @map("is_prescription_required")
+  isActive             Boolean         @default(true) @map("is_active")
+  imageUrl             String?         @map("image_url")
+  createdAt            DateTime        @default(now()) @map("created_at")
+  updatedAt            DateTime        @updatedAt @map("updated_at")
+
+  // Relations
+  batches          MedicineBatch[]
+  purchaseItems    PurchaseItem[]
+  saleItems        SaleItem[]
+  stockAdjustments StockAdjustment[]
+
+  @@index([name])
+  @@index([genericName])
+  @@index([barcode])
+  @@index([category])
+  @@map("medicines")
+}
+
+/// Manufacturer / company master (each has a short unique code, e.g. GLSM).
+model Company {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  code      String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([code])
+  @@map("companies")
+}
+
+/// Generic-group master (each has a unique incremental numeric code).
+model GenericGroup {
+  id        String   @id @default(cuid())
+  name      String
+  code      Int      @unique
+  schedule  String?
+  dosage    String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([name])
+  @@map("generic_groups")
+}
+
+/// Category master (system of medicine, etc.) — code + name.
+model Category {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("categories")
+}
+
+/// Reference catalog of medicines imported from external dataset.
+/// Used for medicine name search/autocomplete suggestions on the website.
+/// This is read-only reference data, separate from sellable `medicines` inventory.
+model MedicineDataset {
+  id           Int      @id
+  name         String
+  price        Decimal? @db.Decimal(10, 2)
+  manufacturer String?
+  type         String?
+  packing      String?
+  genericName  String?  @map("generic_name")
+
+  @@index([name])
+  @@map("medicine_dataset")
+}
+
+/// Individual batches of medicine with expiry tracking
+model MedicineBatch {
+  id              String   @id @default(cuid())
+  medicineId      String   @map("medicine_id")
+  batchNumber     String   @map("batch_number")
+  expiryDate      DateTime @map("expiry_date")
+  manufacturingDate DateTime? @map("manufacturing_date")
+  purchaseRate    Decimal  @db.Decimal(10, 2) @map("purchase_rate")
+  mrp             Decimal  @db.Decimal(10, 2)
+  saleRate        Decimal  @db.Decimal(10, 2) @map("sale_rate")
+  quantity        Int      // Total quantity received
+  availableQty    Int      @map("available_qty") // Current available stock
+  storeId         String   @map("store_id")
+  supplierId      String?  @map("supplier_id")
+  purchaseId      String?  @map("purchase_id")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  medicine         Medicine          @relation(fields: [medicineId], references: [id])
+  store            Store             @relation(fields: [storeId], references: [id])
+  supplier         Supplier?         @relation(fields: [supplierId], references: [id])
+  purchase         Purchase?         @relation(fields: [purchaseId], references: [id])
+  purchaseItems    PurchaseItem[]
+  saleItems        SaleItem[]
+  stockAdjustments StockAdjustment[]
+
+  @@unique([medicineId, batchNumber, storeId])
+  @@index([medicineId])
+  @@index([storeId])
+  @@index([expiryDate])
+  @@map("medicine_batches")
+}
+
+/// Suppliers / Distributors
+model Supplier {
+  id           String   @id @default(cuid())
+  name         String
+  gstin        String?  @unique
+  dlNumber     String?  @map("dl_number")
+  phone        String
+  alternatePhone String? @map("alternate_phone")
+  email        String?
+  address      String
+  city         String   @default("")
+  state        String   @default("")
+  pincode      String   @default("")
+  contactPerson String? @map("contact_person")
+  code         String?  @map("supplier_code")    // supplier's own code
+  ourCode      String?  @map("our_code")          // our party code with this supplier
+  mobileNo     String?  @map("mobile_no")
+  visitDay     String?  @map("visit_day")
+  panNumber    String?  @map("pan_number")
+  aadharNumber String?  @map("aadhar_number")
+  creditDays   Int      @default(30) @map("credit_days")
+  creditLimit  Decimal  @default(0) @db.Decimal(12, 2) @map("credit_limit")
+  balance      Decimal  @default(0) @db.Decimal(12, 2) // Positive = we owe them
+  openingBalance Decimal @default(0) @db.Decimal(12, 2) @map("opening_balance")
+  bankName     String?  @map("bank_name")
+  bankAccount  String?  @map("bank_account")
+  bankIfsc     String?  @map("bank_ifsc")
+  isActive     Boolean  @default(true) @map("is_active")
+  notes        String?  @db.Text
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  purchases       Purchase[]
+  medicineBatches MedicineBatch[]
+  payments        Payment[]
+
+  @@index([name])
+  @@map("suppliers")
+}
+
+/// Customers / Patients
+model Customer {
+  id              String      @id @default(cuid())
+  customerCode    String?     @unique @map("customer_code")
+  name            String
+  phone           String      @unique
+  alternatePhone  String?     @map("alternate_phone")
+  email           String?
+  address         String?
+  city            String?
+  pincode         String?
+  age             Int?
+  dateOfBirth     DateTime?   @map("date_of_birth")
+  gender          Gender?
+  bloodGroup      BloodGroup? @map("blood_group")
+  allergies       String[]    @default([])
+  chronicDiseases String[]    @default([]) @map("chronic_diseases")
+  currentMedications String[] @default([]) @map("current_medications")
+  insuranceProvider String?   @map("insurance_provider")
+  insuranceNumber   String?   @map("insurance_number")
+  loyaltyPoints   Int         @default(0) @map("loyalty_points")
+  totalPurchases  Decimal     @default(0) @db.Decimal(12, 2) @map("total_purchases")
+  isActive        Boolean     @default(true) @map("is_active")
+  notes           String?     @db.Text
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  // Relations
+  sales               Sale[]
+  prescriptions       Prescription[]
+  loyaltyTransactions LoyaltyTransaction[]
+
+  @@index([phone])
+  @@index([name])
+  @@map("customers")
+}
+
+/// Doctor master for prescription management
+model Doctor {
+  id                 String   @id @default(cuid())
+  name               String
+  registrationNumber String   @unique @map("registration_number")
+  specialization     String?
+  qualification      String?
+  phone              String?
+  email              String?
+  clinicName         String?  @map("clinic_name")
+  clinicAddress      String?  @map("clinic_address")
+  city               String?
+  isActive           Boolean  @default(true) @map("is_active")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  prescriptions Prescription[]
+
+  @@index([name])
+  @@map("doctors")
+}
+
+/// Prescriptions uploaded for customers
+model Prescription {
+  id               String             @id @default(cuid())
+  customerId       String             @map("customer_id")
+  doctorId         String?            @map("doctor_id")
+  imagePath        String?            @map("image_path")    // S3 path
+  imageUrl         String?            @map("image_url")     // CDN URL
+  prescriptionDate DateTime           @map("prescription_date")
+  expiryDate       DateTime?          @map("expiry_date")   // Prescription validity
+  status           PrescriptionStatus @default(PENDING)
+  notes            String?            @db.Text
+  verifiedBy       String?            @map("verified_by")   // Pharmacist userId
+  verifiedAt       DateTime?          @map("verified_at")
+  ocrText          String?            @db.Text @map("ocr_text") // AI-extracted text
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+
+  // Relations
+  customer Customer  @relation(fields: [customerId], references: [id])
+  doctor   Doctor?   @relation(fields: [doctorId], references: [id])
+  sales    Sale[]
+
+  @@index([customerId])
+  @@index([status])
+  @@map("prescriptions")
+}
+
+/// Purchase orders from suppliers
+model Purchase {
+  id              String        @id @default(cuid())
+  supplierId      String        @map("supplier_id")
+  storeId         String        @map("store_id")
+  invoiceNumber   String        @map("invoice_number")
+  invoiceDate     DateTime      @map("invoice_date")
+  receivedDate    DateTime?     @map("received_date")
+  status          PurchaseStatus @default(RECEIVED)
+  totalAmount     Decimal       @db.Decimal(12, 2) @map("total_amount")
+  gstAmount       Decimal       @default(0) @db.Decimal(12, 2) @map("gst_amount")
+  discountAmount  Decimal       @default(0) @db.Decimal(12, 2) @map("discount_amount")
+  netAmount       Decimal       @db.Decimal(12, 2) @map("net_amount")
+  paidAmount      Decimal       @default(0) @db.Decimal(12, 2) @map("paid_amount")
+  paymentStatus   PaymentStatus @default(PENDING) @map("payment_status")
+  paymentDueDate  DateTime?     @map("payment_due_date")
+  transportCharge Decimal       @default(0) @db.Decimal(10, 2) @map("transport_charge")
+  otherCharges    Decimal       @default(0) @db.Decimal(10, 2) @map("other_charges")
+  notes           String?       @db.Text
+  createdBy       String?       @map("created_by")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  supplier      Supplier       @relation(fields: [supplierId], references: [id])
+  store         Store          @relation(fields: [storeId], references: [id])
+  items         PurchaseItem[]
+  payments      Payment[]
+  batches       MedicineBatch[]
+
+  @@unique([supplierId, invoiceNumber])
+  @@index([supplierId])
+  @@index([storeId])
+  @@index([invoiceDate])
+  @@index([paymentStatus])
+  @@map("purchases")
+}
+
+/// Individual line items in a purchase
+model PurchaseItem {
+  id           String   @id @default(cuid())
+  purchaseId   String   @map("purchase_id")
+  medicineId   String   @map("medicine_id")
+  batchId      String?  @map("batch_id")
+  quantity     Int
+  freeQty      Int      @default(0) @map("free_qty")
+  purchaseRate Decimal  @db.Decimal(10, 2) @map("purchase_rate")
+  mrp          Decimal  @db.Decimal(10, 2)
+  gstRate      Decimal  @default(12) @db.Decimal(5, 2) @map("gst_rate")
+  cgst         Decimal  @default(0) @db.Decimal(10, 2)
+  sgst         Decimal  @default(0) @db.Decimal(10, 2)
+  igst         Decimal  @default(0) @db.Decimal(10, 2)
+  discountPct  Decimal  @default(0) @db.Decimal(5, 2) @map("discount_pct")
+  discountAmt  Decimal  @default(0) @db.Decimal(10, 2) @map("discount_amt")
+  amount       Decimal  @db.Decimal(12, 2)
+  expiryDate   DateTime? @map("expiry_date")
+  batchNumber  String?   @map("batch_number")
+
+  // Relations
+  purchase Purchase  @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  medicine Medicine  @relation(fields: [medicineId], references: [id])
+  batch    MedicineBatch? @relation(fields: [batchId], references: [id])
+
+  @@index([purchaseId])
+  @@index([medicineId])
+  @@map("purchase_items")
+}
+
+/// Sales / Billing transactions
+model Sale {
+  id             String        @id @default(cuid())
+  customerId     String?       @map("customer_id")
+  customerName   String?       @map("customer_name")  // free-text name (walk-in or snapshot)
+  doctorName     String?       @map("doctor_name")
+  storeId        String        @map("store_id")
+  userId         String        @map("user_id")
+  invoiceNumber  String        @unique @map("invoice_number")
+  saleDate       DateTime      @default(now()) @map("sale_date")
+  status         SaleStatus    @default(COMPLETED)
+  totalAmount    Decimal       @db.Decimal(12, 2) @map("total_amount")
+  gstAmount      Decimal       @default(0) @db.Decimal(12, 2) @map("gst_amount")
+  discountAmount Decimal       @default(0) @db.Decimal(12, 2) @map("discount_amount")
+  roundOff       Decimal       @default(0) @db.Decimal(5, 2) @map("round_off")
+  netAmount      Decimal       @db.Decimal(12, 2) @map("net_amount")
+  paidAmount     Decimal       @default(0) @db.Decimal(12, 2) @map("paid_amount")
+  changeAmount   Decimal       @default(0) @db.Decimal(12, 2) @map("change_amount")
+  paymentMethod  PaymentMethod @default(CASH) @map("payment_method")
+  paymentStatus  PaymentStatus @default(PAID) @map("payment_status")
+  prescriptionId String?       @map("prescription_id")
+  loyaltyPointsEarned Int     @default(0) @map("loyalty_points_earned")
+  loyaltyPointsRedeemed Int   @default(0) @map("loyalty_points_redeemed")
+  notes          String?       @db.Text
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  customer     Customer?    @relation(fields: [customerId], references: [id])
+  store        Store        @relation(fields: [storeId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+  prescription Prescription? @relation(fields: [prescriptionId], references: [id])
+  items        SaleItem[]
+  payments     Payment[]
+
+  @@index([customerId])
+  @@index([storeId])
+  @@index([userId])
+  @@index([saleDate])
+  @@index([invoiceNumber])
+  @@map("sales")
+}
+
+/// Individual line items in a sale
+model SaleItem {
+  id          String   @id @default(cuid())
+  saleId      String   @map("sale_id")
+  medicineId  String   @map("medicine_id")
+  batchId     String?  @map("batch_id")
+  quantity    Int
+  mrp         Decimal  @db.Decimal(10, 2)
+  saleRate    Decimal  @db.Decimal(10, 2) @map("sale_rate")
+  gstRate     Decimal  @default(12) @db.Decimal(5, 2) @map("gst_rate")
+  cgst        Decimal  @default(0) @db.Decimal(10, 2)
+  sgst        Decimal  @default(0) @db.Decimal(10, 2)
+  igst        Decimal  @default(0) @db.Decimal(10, 2)
+  discountPct Decimal  @default(0) @db.Decimal(5, 2) @map("discount_pct")
+  discountAmt Decimal  @default(0) @db.Decimal(10, 2) @map("discount_amt")
+  amount      Decimal  @db.Decimal(12, 2)
+
+  // Relations
+  sale     Sale          @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  medicine Medicine      @relation(fields: [medicineId], references: [id])
+  batch    MedicineBatch? @relation(fields: [batchId], references: [id])
+
+  @@index([saleId])
+  @@index([medicineId])
+  @@map("sale_items")
+}
+
+/// Payment records for both purchases and sales
+model Payment {
+  id            String        @id @default(cuid())
+  type          PaymentType
+  referenceId   String        @map("reference_id")   // saleId or purchaseId
+  referenceType String        @map("reference_type")  // 'SALE' | 'PURCHASE' | 'EXPENSE'
+  amount        Decimal       @db.Decimal(12, 2)
+  method        PaymentMethod
+  transactionId String?       @map("transaction_id")  // UPI/card reference
+  bankReference String?       @map("bank_reference")
+  chequeNumber  String?       @map("cheque_number")
+  chequeDate    DateTime?     @map("cheque_date")
+  notes         String?       @db.Text
+  supplierId    String?       @map("supplier_id")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  supplier Supplier? @relation(fields: [supplierId], references: [id])
+  sale     Sale?     @relation(fields: [referenceId], references: [id], map: "payment_sale_fk")
+  purchase Purchase? @relation(fields: [referenceId], references: [id], map: "payment_purchase_fk")
+
+  @@index([referenceId])
+  @@index([type])
+  @@index([method])
+  @@map("payments")
+}
+
+/// Stock adjustments for damage, expiry, theft etc.
+model StockAdjustment {
+  id             String         @id @default(cuid())
+  medicineId     String         @map("medicine_id")
+  batchId        String?        @map("batch_id")
+  storeId        String         @map("store_id")
+  adjustmentType AdjustmentType @map("adjustment_type")
+  quantity       Int            // positive = add, negative = reduce
+  quantityBefore Int            @map("quantity_before")
+  quantityAfter  Int            @map("quantity_after")
+  reason         String
+  approvedBy     String?        @map("approved_by")
+  approvedAt     DateTime?      @map("approved_at")
+  documentPath   String?        @map("document_path")
+  createdBy      String?        @map("created_by")
+  createdAt      DateTime       @default(now()) @map("created_at")
+
+  // Relations
+  medicine Medicine       @relation(fields: [medicineId], references: [id])
+  batch    MedicineBatch? @relation(fields: [batchId], references: [id])
+  store    Store          @relation(fields: [storeId], references: [id])
+
+  @@index([medicineId])
+  @@index([storeId])
+  @@index([adjustmentType])
+  @@map("stock_adjustments")
+}
+
+/// Audit trail for all important actions
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String?  @map("user_id")
+  action      String   // CREATE, UPDATE, DELETE, LOGIN, LOGOUT, etc.
+  module      String   // MEDICINE, SALE, PURCHASE, USER, etc.
+  entityId    String?  @map("entity_id")
+  entityType  String?  @map("entity_type")
+  oldValues   Json?    @map("old_values")
+  newValues   Json?    @map("new_values")
+  details     String?  @db.Text
+  ipAddress   String?  @map("ip_address")
+  userAgent   String?  @map("user_agent")
+  storeId     String?  @map("store_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  // Relations
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([module])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+/// Customer loyalty points tracking
+model LoyaltyTransaction {
+  id              String                 @id @default(cuid())
+  customerId      String                 @map("customer_id")
+  points          Int                    // Positive = earned, negative = redeemed
+  type            LoyaltyTransactionType
+  referenceId     String?                @map("reference_id")   // saleId or manual adjustment
+  referenceType   String?                @map("reference_type")
+  balanceBefore   Int                    @map("balance_before")
+  balanceAfter    Int                    @map("balance_after")
+  expiryDate      DateTime?              @map("expiry_date")
+  notes           String?                @db.Text
+  createdBy       String?                @map("created_by")
+  createdAt       DateTime               @default(now()) @map("created_at")
+
+  // Relations
+  customer Customer @relation(fields: [customerId], references: [id])
+
+  @@index([customerId])
+  @@index([type])
+  @@index([createdAt])
+  @@map("loyalty_transactions")
+}
+
+/// GST-specific tax configuration
+model GstConfig {
+  id          String   @id @default(cuid())
+  hsnCode     String   @unique @map("hsn_code")
+  description String
+  cgstRate    Decimal  @db.Decimal(5, 2) @map("cgst_rate")
+  sgstRate    Decimal  @db.Decimal(5, 2) @map("sgst_rate")
+  igstRate    Decimal  @db.Decimal(5, 2) @map("igst_rate")
+  cessRate    Decimal  @default(0) @db.Decimal(5, 2) @map("cess_rate")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("gst_configs")
+}
+
+/// Application settings per store
+model Setting {
+  id        String   @id @default(cuid())
+  storeId   String?  @map("store_id")
+  key       String
+  value     String   @db.Text
+  group     String   @default("general")
+  isPublic  Boolean  @default(false) @map("is_public")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([storeId, key])
+  @@index([storeId])
+  @@index([key])
+  @@map("settings")
+}
+
+/// Notification templates
+model NotificationTemplate {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  type      String   // EMAIL, SMS, WHATSAPP
+  subject   String?
+  body      String   @db.Text
+  variables String[] // Available template variables
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("notification_templates")
+}
+
+// =============================================================================
+// Workspace — desktop-style multi-tab session, persisted per user.
+// Each row is one open (or recently-closed) tab. Soft-close via closedAt so
+// tabs can be restored. The whole open set is synced from the client.
+// =============================================================================
+model WorkspaceTab {
+  id          String    @id @default(cuid())
+  userId      String    @map("user_id")
+  instanceKey String    @map("instance_key") // stable client id for this tab instance
+  module      String    // billing | purchase | customers | suppliers | inventory | ...
+  title       String
+  href        String
+  pinned      Boolean   @default(false)
+  position    Int       @default(0)
+  isActive    Boolean   @default(false) @map("is_active") // currently focused tab
+  dirty       Boolean   @default(false) // has unsaved changes
+  state       Json?     // optional serialized tab state
+  closedAt    DateTime? @map("closed_at") // null = open; set = recently closed
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, instanceKey])
+  @@index([userId])
+  @@index([userId, closedAt])
+  @@map("workspace_tabs")
+}

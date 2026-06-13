@@ -1,0 +1,44 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Frontend (Next.js)",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["../node_modules/next/dist/bin/next", "dev"],
+      "cwd": "frontend",
+      "port": 3000,
+      "autoPort": true,
+      "env": {
+        "NEXT_PUBLIC_API_URL": "http://localhost:4000/api",
+        "NEXT_PUBLIC_APP_NAME": "PharmaCare ERP"
+      }
+    },
+    {
+      "name": "Backend (Express API)",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["../node_modules/tsx/dist/cli.mjs", "watch", "src/index.ts"],
+      "cwd": "backend",
+      "port": 4000,
+      "autoPort": true,
+      "env": {
+        "DATABASE_URL": "postgresql://pharmacy_user:PharmacyERP2024!@localhost:5432/pharmacy_erp?schema=public",
+        "DATABASE_DIRECT_URL": "postgresql://pharmacy_user:PharmacyERP2024!@localhost:5432/pharmacy_erp?schema=public",
+        "JWT_SECRET": "pharmacy_erp_super_secret_jwt_key_2024_dev_only_change_in_prod",
+        "JWT_REFRESH_SECRET": "pharmacy_erp_refresh_secret_jwt_key_2024_dev_only_change_in_prod",
+        "NODE_ENV": "development",
+        "CORS_ORIGINS": "http://localhost:3000",
+        "OPENAI_API_KEY": "sk-dev-placeholder"
+      }
+    },
+    {
+      "name": "Prisma Studio",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "db:studio", "--workspace=backend"],
+      "port": 5555,
+      "autoPort": true,
+      "env": {
+        "DATABASE_URL": "postgresql://pharmacy_user:PharmacyERP2024!@localhost:5432/pharmacy_erp?schema=public"
+      }
+    }
+  ]
+}
