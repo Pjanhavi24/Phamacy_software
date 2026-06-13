@@ -71,8 +71,8 @@ Pharmacy Management ERP is a full-stack, production-ready enterprise resource pl
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/your-org/pharmacy-erp.git
-cd pharmacy-erp
+git clone https://github.com/Pjanhavi24/Phamacy_software.git
+cd Phamacy_software
 ```
 
 ### 2. Install Dependencies
@@ -85,11 +85,23 @@ npm install
 
 ### 3. Configure Environment Variables
 
+The backend reads the root `.env`; the frontend reads `frontend/.env.local`:
+
 ```bash
+# Backend (database URL, JWT secret, mail, etc.)
 cp .env.example .env
+
+# Frontend (public API URL & app name — no secrets)
+cp frontend/.env.example frontend/.env.local
 ```
 
-Open `.env` and fill in all required values. See the [Environment Variables](#environment-variables) section below for a full description of each key.
+Open `.env` and fill in all required values (at minimum `DATABASE_URL`). See the
+[Environment Variables](#environment-variables) section below for each key. The
+defaults in `frontend/.env.example` work out-of-the-box for local development.
+
+> **Security:** `.env` / `.env.local` and any OAuth token files
+> (`gmail_token.json`, `credentials.json`) are git-ignored and must never be
+> committed. Use the `.env.example` templates as the source of truth instead.
 
 ### 4. Start PostgreSQL and Redis with Docker
 
@@ -125,9 +137,12 @@ npm run dev
 
 This starts both the backend API server and the frontend development server concurrently.
 
-- Frontend: http://localhost:5173
-- Backend API: http://localhost:3000
-- API Docs (Swagger): http://localhost:3000/api-docs
+- Frontend: http://localhost:3000
+- Backend API: http://localhost:4000
+
+> **Windows note:** if pages get stuck loading or routes 404 intermittently,
+> Windows Defender may be corrupting the on-disk Next.js build cache. Run
+> `./setup-dev.ps1` once (adds a Defender exclusion) and restart the dev server.
 
 ---
 
