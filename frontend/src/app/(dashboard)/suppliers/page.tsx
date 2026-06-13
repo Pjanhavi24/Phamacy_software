@@ -432,42 +432,42 @@ export default function SuppliersPage() {
         title="Suppliers"
         subtitle="Manage suppliers and outstanding payments"
         icon={Building2}
-        actions={
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" onClick={() => refetch()} disabled={isLoading}>
-              <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />Refresh
-            </Button>
-            <Sheet open={addOpen} onOpenChange={setAddOpen}>
-              <SheetTrigger asChild>
-                <Button size="sm">
-                  <Plus className="w-4 h-4 mr-2" />Add Supplier
-                </Button>
-              </SheetTrigger>
-              <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
-                <SheetHeader>
-                  <SheetTitle>Add New Supplier</SheetTitle>
-                </SheetHeader>
-                <div className="mt-4">
-                  <SupplierForm
-                    onSuccess={() => {
-                      setAddOpen(false);
-                      refetch();
-                    }}
-                  />
-                </div>
-              </SheetContent>
-            </Sheet>
-          </div>
-        }
       />
 
-      {/* Search */}
-      <SearchInput
-        value={search}
-        onChange={setSearch}
-        placeholder="Search suppliers..."
-        className="max-w-sm"
-      />
+      {/* Search (left) + actions (right end) on one line */}
+      <div className="flex flex-wrap items-center gap-2">
+        <SearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder="Search suppliers..."
+          className="max-w-sm"
+        />
+        <div className="ml-auto flex items-center gap-2">
+        <Button size="sm" variant="outline" onClick={() => refetch()} disabled={isLoading}>
+          <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />Refresh
+        </Button>
+        <Sheet open={addOpen} onOpenChange={setAddOpen}>
+          <SheetTrigger asChild>
+            <Button size="sm">
+              <Plus className="w-4 h-4 mr-2" />Add Supplier
+            </Button>
+          </SheetTrigger>
+          <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
+            <SheetHeader>
+              <SheetTitle>Add New Supplier</SheetTitle>
+            </SheetHeader>
+            <div className="mt-4">
+              <SupplierForm
+                onSuccess={() => {
+                  setAddOpen(false);
+                  refetch();
+                }}
+              />
+            </div>
+          </SheetContent>
+        </Sheet>
+        </div>
+      </div>
 
       {isError && (
         <ErrorNote>Failed to load suppliers. Please try again.</ErrorNote>

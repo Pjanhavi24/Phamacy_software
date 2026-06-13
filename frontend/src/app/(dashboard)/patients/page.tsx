@@ -354,9 +354,6 @@ export default function PatientsPage() {
     }
   }, []);
   const [viewMode, setViewMode] = useState<"grid" | "table">("table");
-  const [filterBloodGroup, setFilterBloodGroup] = useState("");
-  const [filterDisease, setFilterDisease] = useState("");
-  const [showFilters, setShowFilters] = useState(false);
 
   const { data: paginatedData, isLoading, isError } = useCustomers({ limit: 200 });
   const customers: Customer[] = paginatedData?.data ?? [];
@@ -364,28 +361,14 @@ export default function PatientsPage() {
   const filtered = useMemo(() => {
     return customers.filter((c) => {
       const q = search.toLowerCase();
-      const matchesSearch =
+      return (
         !search ||
         c.name.toLowerCase().includes(q) ||
         (c.phone ?? "").includes(q) ||
-        (c.email ?? "").toLowerCase().includes(q);
-
-      const matchesBloodGroup =
-        !filterBloodGroup ||
-        filterBloodGroup === "all" ||
-        (c.bloodGroup as string) === filterBloodGroup;
-
-      const chronicDiseases: string[] = (c.chronicDiseases as string[]) ?? [];
-      const matchesDisease =
-        !filterDisease ||
-        filterDisease === "all" ||
-        chronicDiseases.some((d) => d.toLowerCase().includes(filterDisease.toLowerCase()));
-
-      return matchesSearch && matchesBloodGroup && matchesDisease;
+        (c.email ?? "").toLowerCase().includes(q)
+      );
     });
-  }, [customers, search, filterBloodGroup, filterDisease]);
-
-  const hasActiveFilters = filterBloodGroup || filterDisease;
+  }, [customers, search]);
 
   return (
     <PageContainer>
@@ -424,18 +407,6 @@ export default function PatientsPage() {
           placeholder="Search by name, phone, email..."
           className="flex-1 min-w-[200px] max-w-sm"
         />
-        <Button
-          variant={showFilters ? "default" : "outline"}
-          size="sm"
-          onClick={() => setShowFilters((v) => !v)}
-        >
-          <Filter className="w-4 h-4 mr-2" />Filters
-          {hasActiveFilters && (
-            <Badge className="ml-2 h-4 w-4 p-0 flex items-center justify-center text-xs rounded-full">
-              !
-            </Badge>
-          )}
-        </Button>
         <div className="flex gap-1 ml-auto">
           <Button
             variant={viewMode === "grid" ? "default" : "outline"}
@@ -455,44 +426,6 @@ export default function PatientsPage() {
           </Button>
         </div>
       </div>
-
-      {/* Filter row */}
-      {showFilters && (
-        <Panel className="flex flex-wrap gap-3 p-4">
-          <div className="flex items-center gap-2">
-            <label className="text-sm font-medium">Blood Group</label>
-            <Select value={filterBloodGroup} onValueChange={setFilterBloodGroup}>
-              <SelectTrigger className="h-8 w-28">
-                <SelectValue placeholder="Any" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Any</SelectItem>
-                {["A+","A-","B+","B-","O+","O-","AB+","AB-"].map((bg) => (
-                  <SelectItem key={bg} value={bg}>{bg}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex items-center gap-2">
-            <label className="text-sm font-medium">Disease</label>
-            <Input
-              className="h-8 w-36"
-              placeholder="e.g. Diabetes"
-              value={filterDisease}
-              onChange={(e) => setFilterDisease(e.target.value)}
-            />
-          </div>
-          {hasActiveFilters && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => { setFilterBloodGroup(""); setFilterDisease(""); }}
-            >
-              <X className="w-4 h-4 mr-1" />Clear
-            </Button>
-          )}
-        </Panel>
-      )}
 
       {isError && (
         <ErrorNote>Failed to load patients. Please try again.</ErrorNote>

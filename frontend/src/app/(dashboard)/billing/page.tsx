@@ -989,6 +989,26 @@ function BillingWorkspace({ billKey }: { billKey: string }) {
         toast.error("Cart is empty");
         return;
       }
+
+      // Schedule H / H1 / X drugs are prescription-only — the bill must carry
+      // both a patient name and a doctor name before it can be saved.
+      const restricted = cart.filter((i) => {
+        const s = (i.schedule || "").toUpperCase().trim();
+        return s === "H" || s === "H1" || s === "X";
+      });
+      if (restricted.length > 0) {
+        const hasPatient = !!(customer?.name || customerQuery.trim());
+        const hasDoctor = !!(doctor?.name || doctorQuery.trim());
+        if (!hasPatient || !hasDoctor) {
+          const names = Array.from(new Set(restricted.map((i) => i.name))).slice(0, 3).join(", ");
+          toast.error(
+            `Schedule H / H1 / X drug (${names}) requires both patient and doctor details. Please add the patient name and doctor name before saving.`,
+            { duration: 6000 }
+          );
+          return;
+        }
+      }
+
       setSaving(true);
       try {
         // Items found via the reference catalog have ids like "cat-…" and don't

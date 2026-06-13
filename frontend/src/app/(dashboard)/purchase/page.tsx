@@ -79,9 +79,25 @@ interface Supplier {
 
 interface MedicineOption {
   id: string;
+  code?: string | number;
   name: string;
   genericName?: string;
   gstRate?: number;
+  mrp?: number;
+  rate?: number;
+  stock?: number;
+  packing?: string;
+}
+
+interface PurchaseBatchOption {
+  id: string;
+  batchNumber: string;
+  expiry: string;
+  availableQty: number;
+  mrp: number;
+  rate: number;
+  expired: boolean;
+  nearExpiry: boolean;
 }
 
 interface PurchaseItem {
@@ -239,6 +255,131 @@ function isNearExpiry(month: string, refDate: Date): boolean {
   return exp.getTime() <= threshold.getTime();
 }
 
+// --- Product picker (wide modal, like the master pickers) ---
+
+function ProductPickerModal({
+  open,
+  initialQuery,
+  onClose,
+  onPick,
+}: {
+  open: boolean;
+  initialQuery?: string;
+  onClose: () => void;
+  onPick: (med: MedicineOption) => void;
+}) {
+  const [q, setQ] = useState("");
+  const [rows, setRows] = useState<MedicineOption[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  // Seed the query when the modal opens.
+  useEffect(() => {
+    if (open) setQ(initialQuery ?? "");
+  }, [open, initialQuery]);
+
+  useEffect(() => {
+    if (!open) return;
+    const term = q.trim();
+    if (term.length < 1) {
+      setRows([]);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    const t = setTimeout(async () => {
+      try {
+        const res = await apiClient.get("/medicines/search", { params: { q: term } });
+        const data = Array.isArray(res.data) ? res.data : res.data?.data ?? [];
+        const mapped: MedicineOption[] = data.map((m: any) => ({
+          id: m.id,
+          code: m.code ?? m.productCode,
+          name: m.name,
+          genericName: m.genericName ?? m.salt,
+          gstRate: m.gstPct ?? m.gstRate,
+          mrp: m.mrp,
+          rate: m.rate ?? m.saleRate,
+          stock: m.stock,
+          packing: m.packing,
+        }));
+        if (!cancelled) setRows(mapped);
+      } catch {
+        if (!cancelled) setRows([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [q, open]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[120] flex items-start justify-center p-4 sm:p-10">
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+      <div className="relative z-10 flex max-h-[80vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900">
+        <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3 dark:border-gray-800">
+          <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">Select Product</h3>
+          <button type="button" onClick={onClose} className="rounded p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="border-b border-gray-200 px-5 py-3 dark:border-gray-800">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <input
+              autoFocus
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search product by name…"
+              className="h-9 w-full rounded-md border border-gray-300 bg-white pl-8 pr-3 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-200 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
+            />
+            {loading && <Loader2 className="absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-blue-500" />}
+          </div>
+        </div>
+        <div className="flex-1 overflow-auto">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-gray-100 text-[11px] uppercase tracking-wide text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+              <tr>
+                <th className="w-20 px-3 py-2 text-left font-semibold">Code</th>
+                <th className="px-3 py-2 text-left font-semibold">Item Name</th>
+                <th className="w-16 px-3 py-2 text-right font-semibold">Stock</th>
+                <th className="w-20 px-3 py-2 text-right font-semibold">MRP</th>
+                <th className="w-28 px-3 py-2 text-left font-semibold">Packing</th>
+              </tr>
+            </thead>
+            <tbody>
+              {q.trim() === "" ? (
+                <tr><td colSpan={5} className="px-3 py-3 text-gray-400">Type to search…</td></tr>
+              ) : loading && rows.length === 0 ? (
+                <tr><td colSpan={5} className="px-3 py-3 text-gray-400">Searching…</td></tr>
+              ) : rows.length === 0 ? (
+                <tr><td colSpan={5} className="px-3 py-3 text-gray-400">No matches.</td></tr>
+              ) : (
+                rows.map((r) => (
+                  <tr
+                    key={r.id}
+                    onClick={() => onPick(r)}
+                    className="cursor-pointer border-t border-gray-100 hover:bg-blue-50 dark:border-gray-800 dark:hover:bg-blue-950/40"
+                  >
+                    <td className="px-3 py-1.5 font-mono text-gray-600 dark:text-gray-400">{r.code ?? "—"}</td>
+                    <td className="px-3 py-1.5 font-medium text-gray-900 dark:text-gray-100">{r.name}</td>
+                    <td className="px-3 py-1.5 text-right text-gray-700 dark:text-gray-300">{r.stock ?? 0}</td>
+                    <td className="px-3 py-1.5 text-right text-gray-700 dark:text-gray-300">{r.mrp != null ? `₹${Number(r.mrp).toFixed(2)}` : "—"}</td>
+                    <td className="px-3 py-1.5 text-gray-500 dark:text-gray-400">{r.packing ?? "—"}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // --- New Purchase Form ---
 
 function NewPurchaseForm() {
@@ -261,12 +402,25 @@ function NewPurchaseForm() {
   // another module spawns a new tab instead of replacing this purchase.
   useTabDirty(items.some((i) => i.medicineId));
 
-  // Medicine search — a single box above the grid (mirrors the Billing page).
+  // Product picker modal — used when editing an existing row's product
+  // (clicking the item name). `pickerRow` holds that row id, else undefined.
+  const [pickerRow, setPickerRow] = useState<string | null | undefined>(undefined);
+  const [pickerQuery, setPickerQuery] = useState("");
+
+  // Inline product search for the bottom add-row: the results window only
+  // opens once the user starts typing, and is keyboard-navigable.
   const [medQuery, setMedQuery] = useState("");
   const [medResults, setMedResults] = useState<MedicineOption[]>([]);
   const [medOpen, setMedOpen] = useState(false);
   const [medLoading, setMedLoading] = useState(false);
   const [highlight, setHighlight] = useState(0);
+  const addSearchRef = useRef<HTMLInputElement>(null);
+
+  // Inline batch dropdown (per row) — mirrors the Billing page batch picker.
+  const [batchRow, setBatchRow] = useState<string | null>(null);
+  const [batchOpts, setBatchOpts] = useState<PurchaseBatchOption[]>([]);
+  const [batchLoading, setBatchLoading] = useState(false);
+
   const excelInputRef = useRef<HTMLInputElement>(null);
 
   // Payment
@@ -369,66 +523,139 @@ function NewPurchaseForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Debounced medicine search for the top search box.
+  // A product was chosen in the picker: append a new row, or replace the
+  // product on an existing row (when editing via the item name).
+  const pickProduct = (med: MedicineOption) => {
+    if (pickerRow) {
+      // Replace product on an existing row; reset the batch (it's product-specific).
+      updateItem(pickerRow, {
+        medicineId: med.id,
+        medicineName: med.name,
+        gstRate: med.gstRate ?? 5,
+        mrp: med.mrp ?? 0,
+        saleRate: med.rate ?? 0,
+        batchNo: "",
+        expiryDate: "",
+      });
+    } else {
+      const ni: PurchaseItem = {
+        ...emptyItem(),
+        medicineId: med.id,
+        medicineName: med.name,
+        gstRate: med.gstRate ?? 5,
+        mrp: med.mrp ?? 0,
+        saleRate: med.rate ?? 0,
+      };
+      ni.amount = calcAmount(ni);
+      setItems((prev) => [...prev, ni]);
+    }
+    setPickerRow(undefined);
+    setPickerQuery("");
+  };
+
+  // Debounced search for the inline add-row (opens the window only on typing).
   useEffect(() => {
     const q = medQuery.trim();
-    if (q.length < 2) {
+    if (q.length < 1) {
       setMedResults([]);
       setMedOpen(false);
       return;
     }
+    let cancelled = false;
+    setMedLoading(true);
+    setMedOpen(true);
     const t = setTimeout(async () => {
-      setMedLoading(true);
       try {
         const res = await apiClient.get("/medicines/search", { params: { q } });
-        const data: MedicineOption[] = Array.isArray(res.data)
-          ? res.data
-          : res.data?.data ?? [];
-        setMedResults(data);
-        setMedOpen(true);
-        setHighlight(0);
+        const data = Array.isArray(res.data) ? res.data : res.data?.data ?? [];
+        const mapped: MedicineOption[] = data.map((m: any) => ({
+          id: m.id,
+          code: m.code ?? m.productCode,
+          name: m.name,
+          genericName: m.genericName ?? m.salt,
+          gstRate: m.gstPct ?? m.gstRate,
+          mrp: m.mrp,
+          rate: m.rate ?? m.saleRate,
+          stock: m.stock,
+          packing: m.packing,
+        }));
+        if (!cancelled) {
+          setMedResults(mapped);
+          setHighlight(0);
+        }
       } catch {
-        const fb = FALLBACK_MEDICINES.filter((m) =>
-          m.name.toLowerCase().includes(q.toLowerCase())
-        );
-        setMedResults(fb);
-        setMedOpen(fb.length > 0);
+        if (!cancelled) setMedResults([]);
       } finally {
-        setMedLoading(false);
+        if (!cancelled) setMedLoading(false);
       }
-    }, 300);
-    return () => clearTimeout(t);
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
   }, [medQuery]);
 
-  // Add a searched medicine as a new grid row.
-  const addMedicine = (med: MedicineOption) => {
+  // Add the chosen product as a NEW row, then clear the search so the add-row
+  // (and its input focus) moves down to the next line.
+  const addFromSearch = (med: MedicineOption) => {
     const ni: PurchaseItem = {
       ...emptyItem(),
       medicineId: med.id,
       medicineName: med.name,
       gstRate: med.gstRate ?? 5,
+      mrp: med.mrp ?? 0,
+      saleRate: med.rate ?? 0,
     };
     ni.amount = calcAmount(ni);
     setItems((prev) => [...prev, ni]);
     setMedQuery("");
     setMedResults([]);
     setMedOpen(false);
+    setTimeout(() => addSearchRef.current?.focus(), 30);
   };
 
-  const handleMedKey = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (!medOpen || medResults.length === 0) return;
+  const handleAddSearchKey = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setHighlight((h) => Math.min(h + 1, medResults.length - 1));
+      setMedOpen(true);
+      setHighlight((h) => Math.min(h + 1, Math.max(0, medResults.length - 1)));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setHighlight((h) => Math.max(h - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      addMedicine(medResults[highlight]);
+      if (medResults.length > 0) addFromSearch(medResults[highlight] ?? medResults[0]);
     } else if (e.key === "Escape") {
       setMedOpen(false);
     }
+  };
+
+  // Open the batch dropdown for a row and load that medicine's batches.
+  const openBatches = async (rowId: string, medicineId: string) => {
+    setBatchRow(rowId);
+    setBatchOpts([]);
+    if (!medicineId) return; // manually-typed product — no catalogue batches yet
+    setBatchLoading(true);
+    try {
+      const res = await apiClient.get(`/medicines/${medicineId}/batches`);
+      setBatchOpts(Array.isArray(res.data) ? res.data : []);
+    } catch {
+      setBatchOpts([]);
+    } finally {
+      setBatchLoading(false);
+    }
+  };
+
+  // Apply a chosen batch to the row (fills batch, rates and expiry).
+  const pickBatch = (rowId: string, b: PurchaseBatchOption) => {
+    updateItem(rowId, {
+      batchNo: b.batchNumber,
+      mrp: b.mrp || 0,
+      saleRate: b.rate || 0,
+      expiryDate: b.expiry || "",
+    });
+    setBatchRow(null);
+    setBatchOpts([]);
   };
 
   const updateItem = (id: string, patch: Partial<PurchaseItem>) => {
@@ -604,10 +831,10 @@ function NewPurchaseForm() {
 
   return (
     <div className="space-y-3">
-      {/* ===================== BILL DETAILS (compact strip) ===================== */}
-      <section className="grid grid-cols-1 items-end gap-x-3 gap-y-2 border-b border-gray-200 px-1 pb-3 dark:border-gray-800 sm:grid-cols-2 lg:grid-cols-4">
+      {/* ===================== BILL DETAILS (single-line strip) ===================== */}
+      <section className="flex flex-wrap items-end gap-3 border-b border-gray-200 px-1 pb-3 dark:border-gray-800">
         {/* Supplier (wide) */}
-        <div className="sm:col-span-2 lg:col-span-2">
+        <div className="min-w-[200px] flex-1">
           <label className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Supplier *</label>
           {supplier ? (
             <div className="flex h-8 items-center justify-between rounded-md border border-blue-200 bg-blue-50 px-2.5 dark:border-blue-900 dark:bg-blue-950/40">
@@ -646,27 +873,21 @@ function NewPurchaseForm() {
           )}
         </div>
         {/* Invoice Number */}
-        <div>
+        <div className="w-32">
           <label className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Invoice No *</label>
-          <Input value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} placeholder="INV-2024-001" className="h-8 text-xs" />
+          <Input value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} placeholder="INV-001" className="h-8 text-xs" />
         </div>
         {/* Invoice Date */}
-        <div>
+        <div className="w-36">
           <label className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Invoice Date</label>
           <Input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} className="h-8 text-xs" />
         </div>
-      </section>
-
-      {/* ===================== ITEM DETAILS ===================== */}
-      <div className="flex items-center justify-between px-1">
-        <h3 className="text-[11px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-          Item Details
-        </h3>
+        {/* Import Excel (on the same line) */}
         <button
           type="button"
           onClick={() => excelInputRef.current?.click()}
           title="Import items from an Excel/CSV file"
-          className="inline-flex items-center gap-1.5 rounded-md border border-green-600 px-2.5 py-1 text-xs font-medium text-green-700 transition-colors hover:bg-green-50 dark:border-green-800 dark:text-green-400 dark:hover:bg-green-950/30"
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-green-600 px-2.5 text-xs font-medium text-green-700 transition-colors hover:bg-green-50 dark:border-green-800 dark:text-green-400 dark:hover:bg-green-950/30"
         >
           <FileSpreadsheet className="h-3.5 w-3.5" /> Import Excel
         </button>
@@ -681,50 +902,13 @@ function NewPurchaseForm() {
             e.target.value = "";
           }}
         />
-      </div>
+      </section>
 
-      {/* Medicine search — clean single input above the grid */}
-      <div className="relative px-1">
-        <div className="relative">
-          <Plus className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-blue-500" />
-          <input
-            value={medQuery}
-            onChange={(e) => setMedQuery(e.target.value)}
-            onKeyDown={handleMedKey}
-            onFocus={() => medResults.length > 0 && setMedOpen(true)}
-            placeholder="Search medicine to add — type a name, then Enter…"
-            className="h-9 w-full rounded-md border border-gray-300 bg-white pl-8 pr-8 text-sm font-medium text-gray-900 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-200 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
-            autoComplete="off"
-          />
-          {medLoading && (
-            <Loader2 className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-blue-500" />
-          )}
-        </div>
-        {medOpen && medResults.length > 0 && (
-          <div className="absolute z-40 left-1 right-1 top-full mt-1 max-h-64 overflow-y-auto rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-xl">
-            {medResults.map((med, idx) => (
-              <button
-                key={med.id}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => addMedicine(med)}
-                onMouseEnter={() => setHighlight(idx)}
-                className={`flex w-full items-center gap-2 border-b border-gray-100 dark:border-gray-800 px-3 py-1.5 text-left text-sm last:border-0 ${
-                  idx === highlight ? "bg-blue-50 dark:bg-blue-950/40" : "hover:bg-gray-50 dark:hover:bg-gray-800"
-                }`}
-              >
-                <Plus className="h-3.5 w-3.5 shrink-0 text-blue-500" />
-                <span className="flex-1 truncate font-medium text-gray-900 dark:text-gray-100">{med.name}</span>
-                {med.genericName && (
-                  <span className="truncate text-xs text-gray-400 dark:text-gray-500">{med.genericName}</span>
-                )}
-                {med.gstRate != null && (
-                  <span className="shrink-0 text-xs text-gray-500 dark:text-gray-400">GST {med.gstRate}%</span>
-                )}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+      {/* ===================== ITEM DETAILS ===================== */}
+      <div>
+        <h3 className="px-1 pb-1 text-[11px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+          Item Details
+        </h3>
 
       {/* Medicine grid — large scrollable area with a sticky dark header */}
       <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
@@ -747,18 +931,7 @@ function NewPurchaseForm() {
               </tr>
             </thead>
             <tbody>
-              {items.length === 0 ? (
-                <tr>
-                  <td colSpan={12}>
-                    <TableEmpty
-                      icon={Package}
-                      title="No items added"
-                      description="Use the search box above to add medicines to this purchase."
-                    />
-                  </td>
-                </tr>
-              ) : (
-                items.map((item, idx) => (
+              {items.map((item, idx) => (
                   <tr
                     key={item.id}
                     className="border-b border-gray-100 hover:bg-blue-50/40 dark:border-gray-800 dark:hover:bg-blue-950/30"
@@ -766,8 +939,15 @@ function NewPurchaseForm() {
                     <td className="px-3 py-2.5 text-gray-400 dark:text-gray-500">{idx + 1}</td>
                     <td className="px-3 py-2.5 font-medium text-gray-900 dark:text-gray-100">
                       <div className="flex items-center gap-2">
-                        <span className="truncate">{item.medicineName}</span>
-                        {!item.medicineId && (
+                        <button
+                          type="button"
+                          onClick={() => { setPickerQuery(""); setPickerRow(item.id); }}
+                          title="Click to change the product"
+                          className="truncate text-left hover:text-blue-600 hover:underline"
+                        >
+                          {item.medicineName || <span className="text-gray-400">Select product…</span>}
+                        </button>
+                        {!item.medicineId && item.medicineName && (
                           <button
                             type="button"
                             onClick={() => createMedicine(item)}
@@ -779,8 +959,44 @@ function NewPurchaseForm() {
                         )}
                       </div>
                     </td>
-                    <td className="px-3 py-2.5">
-                      <Input value={item.batchNo} onChange={(e) => updateItem(item.id, { batchNo: e.target.value })} placeholder="Batch" className="h-8 text-xs" />
+                    <td className="relative px-3 py-2.5">
+                      <Input
+                        value={item.batchNo}
+                        onChange={(e) => updateItem(item.id, { batchNo: e.target.value })}
+                        onFocus={() => openBatches(item.id, item.medicineId)}
+                        onBlur={() => setTimeout(() => setBatchRow((r) => (r === item.id ? null : r)), 150)}
+                        placeholder="Batch"
+                        className="h-8 text-xs"
+                      />
+                      {batchRow === item.id && (
+                        <div className="absolute left-3 right-3 top-full z-40 mt-0.5 max-h-56 min-w-[260px] overflow-auto rounded-md border border-green-200 bg-white shadow-xl dark:border-green-900 dark:bg-gray-900">
+                          {batchLoading ? (
+                            <div className="px-2 py-3 text-center text-gray-400">Loading…</div>
+                          ) : batchOpts.length === 0 ? (
+                            <div className="px-2 py-3 text-center text-gray-400">No previous batches — type a new one.</div>
+                          ) : (
+                            <>
+                              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 border-b border-gray-100 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:border-gray-800">
+                                <span>Batch</span><span className="text-right">Stock</span><span className="text-right">Rate</span><span className="text-right">Exp</span>
+                              </div>
+                              {batchOpts.map((b) => (
+                                <button
+                                  key={b.id}
+                                  type="button"
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={() => pickBatch(item.id, b)}
+                                  className="grid w-full grid-cols-[1fr_auto_auto_auto] gap-2 px-2 py-1.5 text-left text-xs hover:bg-green-50 dark:hover:bg-green-950/30"
+                                >
+                                  <span className="font-mono font-medium text-gray-900 dark:text-gray-100">{b.batchNumber}</span>
+                                  <span className={cn("text-right", b.availableQty > 0 ? "text-gray-600 dark:text-gray-400" : "text-red-500")}>{b.availableQty}</span>
+                                  <span className="text-right text-gray-600 dark:text-gray-400">₹{Number(b.rate || b.mrp || 0).toFixed(0)}</span>
+                                  <span className={cn("text-right", b.expired ? "text-red-600" : b.nearExpiry ? "text-amber-600" : "text-gray-500 dark:text-gray-400")}>{b.expiry}</span>
+                                </button>
+                              ))}
+                            </>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-2.5">
                       <Input
@@ -839,44 +1055,114 @@ function NewPurchaseForm() {
                       </button>
                     </td>
                   </tr>
-                ))
-              )}
+                ))}
+
+              {/* Inline add-medicine row — opens the product picker; stays at the
+                  bottom and moves down each time an item is added. */}
+              <tr className="border-b border-gray-100 dark:border-gray-800 bg-blue-50/30 dark:bg-blue-950/20">
+                <td className="px-3 py-2 text-gray-400 dark:text-gray-500">{items.length + 1}</td>
+                <td className="relative px-3 py-2">
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+                    <input
+                      ref={addSearchRef}
+                      value={medQuery}
+                      onChange={(e) => setMedQuery(e.target.value)}
+                      onKeyDown={handleAddSearchKey}
+                      onBlur={() => setTimeout(() => setMedOpen(false), 150)}
+                      placeholder="Type a product name to search…"
+                      className="h-8 w-full rounded-md border border-gray-300 bg-white pl-7 pr-7 text-xs font-medium text-gray-900 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-200 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+                      autoComplete="off"
+                    />
+                    {medLoading && <Loader2 className="absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-blue-500" />}
+                  </div>
+
+                  {/* Results window — opens only while typing */}
+                  {medOpen && medQuery.trim() !== "" && (
+                    <div className="absolute left-3 top-full z-40 mt-1 w-[560px] max-w-[88vw] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900">
+                      <div className="grid grid-cols-[70px_1fr_56px_72px_96px] gap-2 border-b border-gray-100 bg-gray-100 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:border-gray-800 dark:bg-gray-800 dark:text-gray-400">
+                        <span>Code</span><span>Item Name</span><span className="text-right">Stock</span><span className="text-right">MRP</span><span>Packing</span>
+                      </div>
+                      <div className="max-h-64 overflow-y-auto">
+                        {medLoading && medResults.length === 0 ? (
+                          <div className="px-3 py-3 text-xs text-gray-400">Searching…</div>
+                        ) : medResults.length === 0 ? (
+                          <div className="px-3 py-3 text-xs text-gray-400">No matches.</div>
+                        ) : (
+                          medResults.map((med, idx) => (
+                            <button
+                              key={med.id}
+                              type="button"
+                              onMouseDown={(e) => { e.preventDefault(); addFromSearch(med); }}
+                              onMouseEnter={() => setHighlight(idx)}
+                              className={cn(
+                                "grid w-full grid-cols-[70px_1fr_56px_72px_96px] items-center gap-2 px-3 py-1.5 text-left text-xs",
+                                idx === highlight ? "bg-blue-50 dark:bg-blue-950/40" : "hover:bg-gray-50 dark:hover:bg-gray-800"
+                              )}
+                            >
+                              <span className="font-mono text-gray-600 dark:text-gray-400">{med.code ?? "—"}</span>
+                              <span className="truncate font-medium text-gray-900 dark:text-gray-100">{med.name}</span>
+                              <span className="text-right text-gray-700 dark:text-gray-300">{med.stock ?? 0}</span>
+                              <span className="text-right text-gray-700 dark:text-gray-300">{med.mrp != null ? `₹${Number(med.mrp).toFixed(0)}` : "—"}</span>
+                              <span className="truncate text-gray-500 dark:text-gray-400">{med.packing ?? "—"}</span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </td>
+                <td colSpan={10} className="px-3 py-2 text-xs text-gray-400 dark:text-gray-500">
+                  {items.length === 0 ? "Start typing a product name to search and add." : ""}
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>
       </div>
+      </div>
 
-      {/* Footer: Summary + Actions */}
-      <div className="sticky bottom-0 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 p-4">
-          {/* Summary row */}
-          <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
-            <span className="text-gray-500 dark:text-gray-400">Items: <span className="text-gray-900 dark:text-gray-100 font-medium">{items.filter((i) => i.medicineName).length}</span></span>
-            <span className="text-gray-500 dark:text-gray-400">Qty: <span className="text-gray-900 dark:text-gray-100 font-medium">{items.reduce((s, i) => s + i.qty, 0)}</span></span>
-            <span className="text-gray-500 dark:text-gray-400">Taxable: <span className="text-gray-900 dark:text-gray-100 font-medium">₹{taxableAmt.toFixed(2)}</span></span>
-            <span className="text-gray-500 dark:text-gray-400">CGST: <span className="text-gray-900 dark:text-gray-100 font-medium">₹{cgst.toFixed(2)}</span></span>
-            <span className="text-gray-500 dark:text-gray-400">SGST: <span className="text-gray-900 dark:text-gray-100 font-medium">₹{sgst.toFixed(2)}</span></span>
-            <span className="text-gray-500 dark:text-gray-400">GST: <span className="text-gray-900 dark:text-gray-100 font-medium">₹{totalGst.toFixed(2)}</span></span>
-            <span className="text-lg font-bold text-blue-700">Total: ₹{grandTotal.toFixed(2)}</span>
+      {/* Footer: compact — total on top, tax details below, slim actions */}
+      <div className="sticky bottom-0 border-t border-gray-200 dark:border-gray-800 bg-white px-3 py-1.5 dark:bg-gray-900">
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+          {/* Totals (total above, tax below) */}
+          <div className="flex flex-col">
+            <span className="text-base font-bold text-blue-700">Total: ₹{grandTotal.toFixed(2)}</span>
+            <span className="flex flex-wrap gap-x-3 text-[11px] text-gray-500 dark:text-gray-400">
+              <span>Items {items.filter((i) => i.medicineName).length}</span>
+              <span>Qty {items.reduce((s, i) => s + i.qty, 0)}</span>
+              <span>Taxable ₹{taxableAmt.toFixed(2)}</span>
+              <span>CGST ₹{cgst.toFixed(2)}</span>
+              <span>SGST ₹{sgst.toFixed(2)}</span>
+              <span>GST ₹{totalGst.toFixed(2)}</span>
+            </span>
           </div>
-          {/* Action buttons */}
-          <div className="flex gap-3 flex-shrink-0">
-            <Button variant="outline"
+          {/* Action buttons (slim) */}
+          <div className="flex flex-shrink-0 gap-2">
+            <Button variant="outline" size="sm" className="h-8"
               onClick={() => { setSupplier(null); setInvoiceNo(""); setItems([]); }}>
               Cancel
             </Button>
-            <Button variant="outline" onClick={() => handleSave(true)} disabled={mutation.isPending}
-              className="border-blue-600 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30 disabled:opacity-50">
-              <Printer className="mr-2 h-4 w-4" /> Save & Print
+            <Button variant="outline" size="sm" onClick={() => handleSave(true)} disabled={mutation.isPending}
+              className="h-8 border-blue-600 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30 disabled:opacity-50">
+              <Printer className="mr-1.5 h-3.5 w-3.5" /> Save &amp; Print
             </Button>
-            <Button onClick={() => handleSave(false)} disabled={mutation.isPending}
-              className="px-8 disabled:opacity-50">
-              <Save className="mr-2 h-4 w-4" />
-              {mutation.isPending ? "Saving..." : "Save Purchase"}
+            <Button size="sm" onClick={() => handleSave(false)} disabled={mutation.isPending}
+              className="h-8 px-5 disabled:opacity-50">
+              <Save className="mr-1.5 h-3.5 w-3.5" />
+              {mutation.isPending ? "Saving..." : "Save"}
             </Button>
           </div>
         </div>
       </div>
+
+      {/* Product picker modal */}
+      <ProductPickerModal
+        open={pickerRow !== undefined}
+        initialQuery={pickerQuery}
+        onClose={() => setPickerRow(undefined)}
+        onPick={pickProduct}
+      />
     </div>
   );
 }

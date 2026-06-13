@@ -8,6 +8,7 @@ import {
   Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
 import { PageContainer, PageHeader, Panel } from "@/components/design-system";
+import { FilterSheet, FilterField } from "@/components/common/filter-sheet";
 import { Boxes } from "lucide-react";
 
 const STOCK_DATA = [
@@ -69,45 +70,57 @@ export default function StockReportPage() {
         title="Stock Report & Valuation"
         subtitle="Current stock levels, MRP value, and profit potential"
         icon={Boxes}
-        actions={
-          <ExportToolbar
-            onExportCSV={() => exportCSV(filtered as unknown as Record<string, unknown>[], "stock-report.csv")}
-            onExportExcel={() => exportCSV(filtered as unknown as Record<string, unknown>[], "stock-report.csv")}
-            onExportPDF={() => window.print()}
-          />
-        }
       />
 
-      <Panel className="flex gap-3 flex-wrap p-4">
-        <Input className="h-8 text-xs w-48" placeholder="Search medicine..." value={search} onChange={(e) => setSearch(e.target.value)} />
-        <Select value={storeFilter} onValueChange={setStoreFilter}>
-          <SelectTrigger className="h-8 text-xs w-36"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Stores</SelectItem>
-            <SelectItem value="Main Store">Main Store</SelectItem>
-            <SelectItem value="Branch 1">Branch 1</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="h-8 text-xs w-36"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Status</SelectItem>
-            <SelectItem value="Good">Good</SelectItem>
-            <SelectItem value="Low">Low Stock</SelectItem>
-            <SelectItem value="Expiring">Expiring Soon</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-          <SelectTrigger className="h-8 text-xs w-36"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Categories</SelectItem>
-            <SelectItem value="Tablet">Tablet</SelectItem>
-            <SelectItem value="Syrup">Syrup</SelectItem>
-            <SelectItem value="Ointment">Ointment</SelectItem>
-            <SelectItem value="Capsule">Capsule</SelectItem>
-          </SelectContent>
-        </Select>
-      </Panel>
+      <div className="flex items-center gap-2">
+        <Input className="h-9 text-sm max-w-sm" placeholder="Search medicine..." value={search} onChange={(e) => setSearch(e.target.value)} />
+        <div className="ml-auto flex items-center gap-2">
+        <FilterSheet
+          activeCount={[storeFilter, statusFilter, categoryFilter].filter((v) => v !== "all").length}
+          recordCount={`${filtered.length} items`}
+          onClear={() => { setStoreFilter("all"); setStatusFilter("all"); setCategoryFilter("all"); }}
+        >
+          <FilterField label="Store">
+            <Select value={storeFilter} onValueChange={setStoreFilter}>
+              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Stores</SelectItem>
+                <SelectItem value="Main Store">Main Store</SelectItem>
+                <SelectItem value="Branch 1">Branch 1</SelectItem>
+              </SelectContent>
+            </Select>
+          </FilterField>
+          <FilterField label="Stock Status">
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Status</SelectItem>
+                <SelectItem value="Good">Good</SelectItem>
+                <SelectItem value="Low">Low Stock</SelectItem>
+                <SelectItem value="Expiring">Expiring Soon</SelectItem>
+              </SelectContent>
+            </Select>
+          </FilterField>
+          <FilterField label="Category">
+            <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Categories</SelectItem>
+                <SelectItem value="Tablet">Tablet</SelectItem>
+                <SelectItem value="Syrup">Syrup</SelectItem>
+                <SelectItem value="Ointment">Ointment</SelectItem>
+                <SelectItem value="Capsule">Capsule</SelectItem>
+              </SelectContent>
+            </Select>
+          </FilterField>
+        </FilterSheet>
+        <ExportToolbar
+          onExportCSV={() => exportCSV(filtered as unknown as Record<string, unknown>[], "stock-report.csv")}
+          onExportExcel={() => exportCSV(filtered as unknown as Record<string, unknown>[], "stock-report.csv")}
+          onExportPDF={() => window.print()}
+        />
+        </div>
+      </div>
 
       <Panel className="overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800">

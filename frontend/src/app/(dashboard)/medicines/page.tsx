@@ -68,6 +68,7 @@ import {
   SearchInput,
   TableEmpty,
 } from "@/components/design-system";
+import { FilterSheet, FilterField } from "@/components/common/filter-sheet";
 
 // --- Types
 
@@ -276,7 +277,7 @@ function useMedicines(search: string, page: number, pageSize: number, category: 
 function SkeletonRow() {
   return (
     <TableRow className="border-gray-200 dark:border-gray-800">
-      {[...Array(12)].map((_, j) => (
+      {[...Array(11)].map((_, j) => (
         <TableCell key={j}>
           <div className="h-4 bg-gray-100 dark:bg-gray-800 rounded animate-pulse" />
         </TableCell>
@@ -1041,118 +1042,79 @@ export default function MedicinesPage() {
         }
       />
 
-      {/* Smart Search Bar */}
-      <div ref={searchRef} className="relative">
-        <SearchInput
-          value={search}
-          onChange={(value) => {
-            setSearch(value);
-            setShowSmartSearch(value.length > 1);
-          }}
-          placeholder="Search by medicine name, brand name, salt composition, generic name, barcode..."
-        />
-
-        {showSmartSearch && debouncedSearch.length > 1 && (
-          <SmartSearchPanel
-            query={debouncedSearch}
-            medicines={medicines}
-            onSelectMedicine={handleSmartSelect}
+      {/* Smart Search Bar + Filters */}
+      <div className="flex items-center gap-2">
+        <div ref={searchRef} className="relative flex-1">
+          <SearchInput
+            value={search}
+            onChange={(value) => {
+              setSearch(value);
+              setShowSmartSearch(value.length > 1);
+            }}
+            placeholder="Search by medicine name, brand name, salt composition, generic name, barcode..."
           />
-        )}
-      </div>
 
-      {/* Filters (Collapsible) */}
-      <Panel className="overflow-hidden">
-        <button
-          className="w-full flex items-center justify-between p-4 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-          onClick={() => setFiltersOpen((v) => !v)}
-        >
-          <div className="flex items-center gap-2">
-            <Filter className="w-4 h-4 text-gray-500 dark:text-gray-400" />
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Filters</span>
-            {activeFiltersCount > 0 && (
-              <Badge className="bg-blue-600 text-white text-xs px-1.5 py-0.5 border-0">
-                {activeFiltersCount}
-              </Badge>
-            )}
-          </div>
-          {filtersOpen ? (
-            <ChevronUp className="w-4 h-4 text-gray-500 dark:text-gray-400" />
-          ) : (
-            <ChevronDown className="w-4 h-4 text-gray-500 dark:text-gray-400" />
+          {showSmartSearch && debouncedSearch.length > 1 && (
+            <SmartSearchPanel
+              query={debouncedSearch}
+              medicines={medicines}
+              onSelectMedicine={handleSmartSelect}
+            />
           )}
-        </button>
+        </div>
 
-        {filtersOpen && (
-          <div className="border-t border-gray-200 dark:border-gray-800 p-4 grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <div>
-              <Label className="text-gray-500 dark:text-gray-400 text-xs mb-1 block">Category</Label>
-              <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                <SelectTrigger className="bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-300 h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-800">
-                  {CATEGORIES.map((c) => (
-                    <SelectItem key={c} value={c} className="text-gray-800 dark:text-gray-200">{c}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label className="text-gray-500 dark:text-gray-400 text-xs mb-1 block">Manufacturer</Label>
-              <Select value={manufacturerFilter} onValueChange={setManufacturerFilter}>
-                <SelectTrigger className="bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-300 h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-800">
-                  {manufacturers.map((m) => (
-                    <SelectItem key={m} value={m} className="text-gray-800 dark:text-gray-200">{m}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label className="text-gray-500 dark:text-gray-400 text-xs mb-1 block">Schedule Type</Label>
-              <Select value={scheduleFilter} onValueChange={setScheduleFilter}>
-                <SelectTrigger className="bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-300 h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-800">
-                  {SCHEDULES.map((s) => (
-                    <SelectItem key={s} value={s} className="text-gray-800 dark:text-gray-200">{s}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label className="text-gray-500 dark:text-gray-400 text-xs mb-1 block">Stock Status</Label>
-              <Select value={stockStatusFilter} onValueChange={setStockStatusFilter}>
-                <SelectTrigger className="bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-300 h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-800">
-                  {STOCK_STATUS_OPTIONS.map((s) => (
-                    <SelectItem key={s} value={s} className="text-gray-800 dark:text-gray-200">{s}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            {activeFiltersCount > 0 && (
-              <button
-                className="col-span-2 lg:col-span-4 text-xs text-blue-600 hover:text-blue-700 text-left"
-                onClick={() => {
-                  setCategoryFilter("All");
-                  setScheduleFilter("All");
-                  setStockStatusFilter("All");
-                  setManufacturerFilter("All");
-                }}
-              >
-                Clear all filters
-              </button>
-            )}
-          </div>
-        )}
-      </Panel>
+        <FilterSheet
+          activeCount={activeFiltersCount}
+          recordCount={`${filtered.length} on this page`}
+          onClear={() => {
+            setCategoryFilter("All");
+            setScheduleFilter("All");
+            setStockStatusFilter("All");
+            setManufacturerFilter("All");
+          }}
+        >
+          <FilterField label="Category">
+            <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {CATEGORIES.map((c) => (
+                  <SelectItem key={c} value={c}>{c}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FilterField>
+          <FilterField label="Manufacturer">
+            <Select value={manufacturerFilter} onValueChange={setManufacturerFilter}>
+              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {manufacturers.map((m) => (
+                  <SelectItem key={m} value={m}>{m}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FilterField>
+          <FilterField label="Schedule Type">
+            <Select value={scheduleFilter} onValueChange={setScheduleFilter}>
+              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {SCHEDULES.map((s) => (
+                  <SelectItem key={s} value={s}>{s}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FilterField>
+          <FilterField label="Stock Status">
+            <Select value={stockStatusFilter} onValueChange={setStockStatusFilter}>
+              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {STOCK_STATUS_OPTIONS.map((s) => (
+                  <SelectItem key={s} value={s}>{s}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FilterField>
+        </FilterSheet>
+      </div>
 
       {/* Result count */}
       <div className="flex items-center justify-between">
@@ -1184,7 +1146,6 @@ export default function MedicinesPage() {
                   "MRP",
                   "Purchase Rate",
                   "Stock",
-                  "Expiry",
                   "Actions",
                 ].map((h) => (
                   <TableHead
@@ -1201,7 +1162,7 @@ export default function MedicinesPage() {
                 [...Array(6)].map((_, i) => <SkeletonRow key={i} />)
               ) : filtered.length === 0 ? (
                 <TableRow className="border-0 hover:bg-transparent">
-                  <TableCell colSpan={12} className="p-0">
+                  <TableCell colSpan={11} className="p-0">
                     <TableEmpty
                       icon={Package}
                       title={
@@ -1219,11 +1180,6 @@ export default function MedicinesPage() {
                 </TableRow>
               ) : (
                 filtered.map((medicine, idx) => {
-                  const isExpiringSoon =
-                    medicine.expiryDate &&
-                    new Date(medicine.expiryDate) < new Date(Date.now() + 90 * 24 * 60 * 60 * 1000) &&
-                    new Date(medicine.expiryDate) > new Date();
-
                   return (
                     <TableRow
                       key={medicine.id}
@@ -1284,16 +1240,6 @@ export default function MedicinesPage() {
                         </span>
                       </TableCell>
 
-                      <TableCell className="text-xs whitespace-nowrap">
-                        {medicine.expiryDate ? (
-                          <span className={isExpiringSoon ? "text-amber-600" : "text-gray-500 dark:text-gray-400"}>
-                            {formatExpiry(medicine.expiryDate)}
-                            {isExpiringSoon && <span className="ml-1 text-amber-500">⚠</span>}
-                          </span>
-                        ) : (
-                          <span className="text-gray-300 dark:text-gray-600">—</span>
-                        )}
-                      </TableCell>
 
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center gap-1">

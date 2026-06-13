@@ -24,6 +24,7 @@ import {
   SearchInput,
   ds,
 } from "@/components/design-system";
+import { FilterSheet, FilterField } from "@/components/common/filter-sheet";
 import {
   Receipt,
   Printer,
@@ -35,6 +36,7 @@ import {
   Download,
   RefreshCw,
   ShoppingCart,
+  Filter,
 } from "lucide-react";
 import { cn, formatCurrency } from "@/lib/utils";
 
@@ -242,6 +244,8 @@ export default function SalesPage() {
         return arr.map(normalize);
       }),
   });
+
+  const activeFilterCount = [billNo, custId, nameQ, dateQ].filter((v) => v.trim()).length;
 
   // Independent column filters (AND): bill no, customer id, name, date.
   const filtered = useMemo(() => {
@@ -489,14 +493,28 @@ export default function SalesPage() {
         subtitle="Sales history & invoices"
         icon={Receipt}
         actions={
-          <div className="flex w-full flex-wrap items-center justify-center gap-2">
-            <SearchInput value={billNo} onChange={setBillNo} placeholder="Bill No" className="w-32 [&_input]:placeholder:text-xs" />
-            <SearchInput value={custId} onChange={setCustId} placeholder="ID" className="w-36 [&_input]:placeholder:text-xs" />
-            <SearchInput value={nameQ} onChange={setNameQ} placeholder="Name" className="w-52 [&_input]:placeholder:text-xs" />
-            <SearchInput value={dateQ} onChange={setDateQ} placeholder="dd/mm/yy" className="w-36 [&_input]:placeholder:text-xs" />
+          <div className="flex items-center gap-2">
             <span className="rounded-full bg-blue-50 dark:bg-blue-950/40 px-3 py-1 text-xs font-semibold text-blue-700">
               {filtered.length} records
             </span>
+            <FilterSheet
+              activeCount={activeFilterCount}
+              recordCount={`${filtered.length} records`}
+              onClear={() => { setBillNo(""); setCustId(""); setNameQ(""); setDateQ(""); }}
+            >
+              <FilterField label="Bill No">
+                <SearchInput value={billNo} onChange={setBillNo} placeholder="Bill No" />
+              </FilterField>
+              <FilterField label="Customer ID">
+                <SearchInput value={custId} onChange={setCustId} placeholder="ID" />
+              </FilterField>
+              <FilterField label="Patient Name">
+                <SearchInput value={nameQ} onChange={setNameQ} placeholder="Name" />
+              </FilterField>
+              <FilterField label="Date">
+                <SearchInput value={dateQ} onChange={setDateQ} placeholder="dd/mm/yy" />
+              </FilterField>
+            </FilterSheet>
           </div>
         }
       />
@@ -683,6 +701,7 @@ export default function SalesPage() {
             : undefined
         }
       />
+
     </PageContainer>
   );
 }

@@ -20,7 +20,6 @@ import {
   CalendarClock,
   FileText,
   ShoppingCart,
-  Bell,
   ChevronDown,
   LogOut,
   User,
@@ -124,7 +123,6 @@ export default function DashboardLayout({
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [storeMenuOpen, setStoreMenuOpen] = useState(false);
   const [selectedBranch, setSelectedBranch] = useState("Main Branch");
-  const [notifCount] = useState(4);
   const [openGroups, setOpenGroups] = useState<string[]>(["Item Report"]);
   const toggleGroup = (label: string) =>
     setOpenGroups((prev) =>
@@ -463,15 +461,6 @@ export default function DashboardLayout({
               )}
             </div>
 
-            {/* Notifications */}
-            <button className="relative w-9 h-9 rounded-md bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 flex items-center justify-center text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-gray-800 dark:hover:text-gray-200 transition-colors">
-              <Bell size={16} />
-              {notifCount > 0 && (
-                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">
-                  {notifCount}
-                </span>
-              )}
-            </button>
 
             {/* User avatar + dropdown */}
             <div className="relative" ref={userMenuRef}>

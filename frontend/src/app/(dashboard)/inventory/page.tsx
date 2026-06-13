@@ -221,8 +221,31 @@ export default function InventoryPage() {
         title="Inventory Overview"
         subtitle="Manage medicine stock, batches, and adjustments"
         icon={Package}
-        actions={
-          <div className="flex items-center gap-2">
+      />
+
+      <Panel>
+        {/* Filter dropdown + search + stock actions (one line) */}
+        <PanelBar>
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={activeTab}
+              onChange={(e) => setActiveTab(e.target.value as TabType)}
+              className="h-9 rounded-md border border-gray-300 bg-white px-2.5 text-sm font-medium text-gray-700 outline-none focus:border-blue-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+            >
+              {tabs.map((t) => (
+                <option key={t.key} value={t.key}>
+                  {t.label} ({t.count})
+                </option>
+              ))}
+            </select>
+            <SearchInput
+              value={searchQuery}
+              onChange={setSearchQuery}
+              placeholder="Search medicine, batch..."
+              className="w-56"
+            />
+          </div>
+          <div className="flex items-center gap-2 pr-1">
             <button
               onClick={() => setStockMode("in")}
               className="flex items-center gap-1.5 rounded-md bg-green-600 px-3 py-2 text-sm font-semibold text-white hover:bg-green-700"
@@ -235,24 +258,15 @@ export default function InventoryPage() {
             >
               <PackageMinus className="h-4 w-4" /> Stock Out
             </button>
-            <button onClick={fetchBatches} className={ds.btnOutline}>
+            <button
+              onClick={fetchBatches}
+              title="Refresh"
+              aria-label="Refresh"
+              className="flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
               <RefreshCw className="h-4 w-4" />
-              Refresh
             </button>
           </div>
-        }
-      />
-
-      <Panel>
-        {/* Tabs + search */}
-        <PanelBar>
-          <StatusTabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
-          <SearchInput
-            value={searchQuery}
-            onChange={setSearchQuery}
-            placeholder="Search medicine, batch..."
-            className="w-64"
-          />
         </PanelBar>
 
         {/* Count + stock value summary */}
