@@ -139,6 +139,7 @@ router.post('/', async (req: Request, res: Response) => {
         contactPerson: req.body.contactPerson || null,
         panNumber: req.body.panNumber || null,
         aadharNumber: req.body.aadharNumber || null,
+        cdPct: req.body.cdPct != null ? Number(req.body.cdPct) : 0,
         balance: req.body.balance ?? 0,
       },
     });
@@ -157,11 +158,13 @@ router.put('/:id', async (req: Request, res: Response) => {
   try {
     const fields = [
       'name', 'phone', 'code', 'ourCode', 'gstin', 'dlNumber', 'email', 'address',
-      'state', 'mobileNo', 'visitDay', 'contactPerson', 'panNumber', 'aadharNumber', 'balance',
+      'state', 'mobileNo', 'visitDay', 'contactPerson', 'panNumber', 'aadharNumber', 'balance', 'cdPct',
     ];
     const data: any = {};
     for (const f of fields) {
-      if (req.body[f] !== undefined) data[f] = f === 'gstin' ? (req.body[f] || null) : req.body[f];
+      if (req.body[f] !== undefined) {
+        data[f] = f === 'gstin' ? (req.body[f] || null) : f === 'cdPct' ? Number(req.body[f] || 0) : req.body[f];
+      }
     }
 
     const supplier = await prisma.supplier.update({

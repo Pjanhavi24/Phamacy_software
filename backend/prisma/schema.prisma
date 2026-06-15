@@ -307,6 +307,7 @@ model GenericGroup {
   code      Int      @unique
   schedule  String?
   dosage    String?
+  ndps      Boolean  @default(false)   // NDPS (narcotic) substance
   createdAt DateTime @default(now()) @map("created_at")
 
   @@index([name])
@@ -395,6 +396,7 @@ model Supplier {
   panNumber    String?  @map("pan_number")
   aadharNumber String?  @map("aadhar_number")
   creditDays   Int      @default(30) @map("credit_days")
+  cdPct        Decimal  @default(0) @db.Decimal(5, 2) @map("cd_pct")   // default cash discount %
   creditLimit  Decimal  @default(0) @db.Decimal(12, 2) @map("credit_limit")
   balance      Decimal  @default(0) @db.Decimal(12, 2) // Positive = we owe them
   openingBalance Decimal @default(0) @db.Decimal(12, 2) @map("opening_balance")
@@ -505,6 +507,7 @@ model Prescription {
 /// Purchase orders from suppliers
 model Purchase {
   id              String        @id @default(cuid())
+  inwardNumber    Int?          @unique @map("inward_number")  // strictly incremental inward no.
   supplierId      String        @map("supplier_id")
   storeId         String        @map("store_id")
   invoiceNumber   String        @map("invoice_number")

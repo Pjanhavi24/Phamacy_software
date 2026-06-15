@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { WorkspaceProvider } from "@/components/workspace/workspace-context";
 import { TabBar } from "@/components/workspace/tab-bar";
+import { apiClient } from "@/lib/api";
 
 interface NavItem {
   label: string;
@@ -67,7 +68,7 @@ const navSections: NavSection[] = [
     title: "INVENTORY",
     items: [
       { label: "Inventory", href: "/inventory", icon: <BarChart3 size={18} /> },
-      { label: "Expiry Alert", href: "/expiry", icon: <Clock size={18} />, badge: 12 },
+      { label: "Expiry Alert", href: "/expiry", icon: <Clock size={18} /> },
       { label: "Expiry Return", href: "/expiry/return", icon: <Truck size={18} /> },
       { label: "Stock Report", href: "/stock", icon: <ClipboardList size={18} /> },
     ],
@@ -131,6 +132,24 @@ export default function DashboardLayout({
 
   const userMenuRef = useRef<HTMLDivElement>(null);
   const storeMenuRef = useRef<HTMLDivElement>(null);
+
+  // Live "Expiry Alert" badge: count of batches expiring within 90 days.
+  const [expiringCount, setExpiringCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      apiClient
+        .get("/inventory/expiring", { params: { days: 90 } })
+        .then((r) => {
+          const n = r.data?.count ?? (Array.isArray(r.data?.batches) ? r.data.batches.length : 0);
+          if (!cancelled) setExpiringCount(Number(n) || 0);
+        })
+        .catch(() => {});
+    };
+    load();
+    const t = setInterval(load, 60000); // refresh every minute
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
 
   // Auth guard: bounce to /login when there is no access token.
   const [authChecked, setAuthChecked] = useState(false);
@@ -204,6 +223,11 @@ export default function DashboardLayout({
   // A single leaf nav link (the original sidebar item rendering).
   const renderLeaf = (item: NavItem, collapsed: boolean) => {
     const active = isActive(item.href);
+    // Expiry Alert shows the live ≤90-day count; other items use their static badge.
+    const badge =
+      item.href === "/expiry"
+        ? (expiringCount > 0 ? expiringCount : undefined)
+        : item.badge;
     return (
       <div key={item.href} className="relative group px-2">
         <Link
@@ -223,18 +247,18 @@ export default function DashboardLayout({
               {item.label}
             </span>
           )}
-          {!collapsed && item.badge !== undefined && (
+          {!collapsed && badge !== undefined && (
             <span
               className={`ml-auto flex-shrink-0 min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-semibold flex items-center justify-center ${
                 active && item.prominent ? "bg-white/20 text-white" : "bg-red-50 text-red-600"
               }`}
             >
-              {item.badge}
+              {badge}
             </span>
           )}
-          {collapsed && item.badge !== undefined && (
+          {collapsed && badge !== undefined && (
             <span className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">
-              {item.badge}
+              {badge}
             </span>
           )}
         </Link>

@@ -199,32 +199,39 @@ export default function ExpiryReturnPage() {
         title="Expiry Return"
         subtitle="Return expired / near-expiry stock to the distributor it was bought from"
         icon={CalendarClock}
-        actions={
-          <button
-            disabled={selected.size === 0}
-            onClick={() => setShowNote(true)}
-            className={cn(ds.btnStrong, "disabled:cursor-not-allowed disabled:opacity-50")}
-          >
-            <Truck className="h-4 w-4" /> Generate Return Bill ({selected.size})
-          </button>
-        }
       />
 
       <Panel className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <PanelBar>
-          <StatusTabs tabs={TABS} active={tab} onChange={setTab} />
+          <select
+            value={distFilter}
+            onChange={(e) => setDistFilter(e.target.value)}
+            className={cn(ds.field, "w-48")}
+          >
+            <option value="all">All distributors</option>
+            {distributors.map((d) => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
+          </select>
           <div className="flex flex-wrap items-center gap-2">
-            <select
-              value={distFilter}
-              onChange={(e) => setDistFilter(e.target.value)}
-              className={cn(ds.field, "w-48")}
+            {/* Generate Return Bill — in the search bar's place */}
+            <button
+              disabled={selected.size === 0}
+              onClick={() => setShowNote(true)}
+              className={cn(ds.btnStrong, "disabled:cursor-not-allowed disabled:opacity-50")}
             >
-              <option value="all">All distributors</option>
-              {distributors.map((d) => (
-                <option key={d.id} value={d.id}>{d.name}</option>
+              <Truck className="h-4 w-4" /> Generate Return Bill ({selected.size})
+            </button>
+            {/* Period filter as a dropdown, on the right */}
+            <select
+              value={tab}
+              onChange={(e) => setTab(e.target.value as typeof tab)}
+              className={cn(ds.field, "w-40")}
+            >
+              {TABS.map((t) => (
+                <option key={t.key} value={t.key}>{t.label}</option>
               ))}
             </select>
-            <SearchInput value={search} onChange={setSearch} placeholder="Search medicine / batch…" className="w-56" />
           </div>
         </PanelBar>
 

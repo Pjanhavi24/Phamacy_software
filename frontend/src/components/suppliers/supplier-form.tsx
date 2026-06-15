@@ -23,6 +23,7 @@ const supplierSchema = z.object({
   aadharNumber: z.string().optional(),
   state: z.string().optional(),
   gstin: z.string().optional(),
+  cdPct: z.coerce.number().min(0).max(100).optional(),
   dlNumber: z.string().optional(),
   address: z.string().optional(),
 });
@@ -43,6 +44,7 @@ const FIELDS: { name: keyof SupplierFormValues; label: string; required?: boolea
   { name: "aadharNumber", label: "Aadhar Number", placeholder: "1234 5678 9012" },
   { name: "state", label: "State", placeholder: "Karnataka" },
   { name: "gstin", label: "GSTIN", placeholder: "29ABCDE1234F1Z5" },
+  { name: "cdPct", label: "Cash Discount (CD %)", placeholder: "e.g. 5" },
 ];
 
 interface SupplierFormProps {

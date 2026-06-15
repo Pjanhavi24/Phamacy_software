@@ -92,7 +92,7 @@ router.get('/generics', async (req: Request, res: Response) => {
     const [items, total] = await Promise.all([
       prisma.genericGroup.findMany({
         where, orderBy: { code: 'asc' }, take, skip,
-        select: { id: true, code: true, name: true, schedule: true, dosage: true },
+        select: { id: true, code: true, name: true, schedule: true, dosage: true, ndps: true },
       }),
       prisma.genericGroup.count({ where }),
     ]);
@@ -109,7 +109,7 @@ router.post('/generics', async (req: Request, res: Response) => {
     const max = await prisma.genericGroup.aggregate({ _max: { code: true } });
     const code = (max._max.code ?? 0) + 1;
     const created = await prisma.genericGroup.create({
-      data: { name, code, schedule: req.body.schedule || null, dosage: req.body.dosage || null },
+      data: { name, code, schedule: req.body.schedule || null, dosage: req.body.dosage || null, ndps: !!req.body.ndps },
     });
     return res.status(201).json(created);
   } catch (err) {
@@ -123,6 +123,7 @@ router.put('/generics/:id', async (req: Request, res: Response) => {
     if (req.body.name != null) data.name = String(req.body.name).trim();
     if (req.body.schedule !== undefined) data.schedule = req.body.schedule || null;
     if (req.body.dosage !== undefined) data.dosage = req.body.dosage || null;
+    if (req.body.ndps !== undefined) data.ndps = !!req.body.ndps;
     const updated = await prisma.genericGroup.update({ where: { id: req.params.id }, data });
     return res.json(updated);
   } catch (err) {

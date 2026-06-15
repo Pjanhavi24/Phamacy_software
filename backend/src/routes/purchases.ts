@@ -6,24 +6,15 @@ const router = Router();
 router.use(authenticate);
 
 // Generate purchase number like PO-2024-001234
-async function generatePurchaseNumber(): Promise<string> {
-  const year = new Date().getFullYear();
-  const prefix = `PO-${year}-`;
-
-  const lastPurchase = await prisma.purchase.findFirst({
-    where: { purchaseNumber: { startsWith: prefix } },
-    orderBy: { purchaseNumber: 'desc' },
-    select: { purchaseNumber: true },
-  });
-
-  let nextSeq = 1;
-  if (lastPurchase?.purchaseNumber) {
-    const parts = lastPurchase.purchaseNumber.split('-');
-    const seq = parseInt(parts[parts.length - 1], 10);
-    if (!isNaN(seq)) nextSeq = seq + 1;
+// Resolve the acting user's store (fallback to the first store).
+async function resolveStoreId(req: Request): Promise<string | null> {
+  const userId = (req as any).user?.userId as string | undefined;
+  if (userId) {
+    const u = await prisma.user.findUnique({ where: { id: userId }, select: { storeId: true } });
+    if (u?.storeId) return u.storeId;
   }
-
-  return `${prefix}${String(nextSeq).padStart(6, '0')}`;
+  const s = await prisma.store.findFirst({ select: { id: true } });
+  return s?.id ?? null;
 }
 
 // GET /purchases
@@ -34,11 +25,11 @@ router.get('/', async (req: Request, res: Response) => {
 
     const where: any = {};
     if (supplierId) where.supplierId = supplierId as string;
-    if (status) where.status = status as string;
+    if (status) where.paymentStatus = String(status).toUpperCase();
     if (startDate || endDate) {
-      where.purchaseDate = {};
-      if (startDate) where.purchaseDate.gte = new Date(startDate as string);
-      if (endDate) where.purchaseDate.lte = new Date(endDate as string);
+      where.invoiceDate = {};
+      if (startDate) where.invoiceDate.gte = new Date(startDate as string);
+      if (endDate) where.invoiceDate.lte = new Date(endDate as string);
     }
 
     const [purchases, total] = await Promise.all([
@@ -54,7 +45,7 @@ router.get('/', async (req: Request, res: Response) => {
         },
         skip,
         take: +limit,
-        orderBy: { purchaseDate: 'desc' },
+        orderBy: { invoiceDate: 'desc' },
       }),
       prisma.purchase.count({ where }),
     ]);
@@ -106,6 +97,17 @@ router.get('/items', async (req: Request, res: Response) => {
   }
 });
 
+// GET /purchases/next-inward — the inward number the next purchase will get.
+// (Must precede the /:id route so it isn't captured as an id.)
+router.get('/next-inward', async (_req: Request, res: Response) => {
+  try {
+    const max = await prisma.purchase.aggregate({ _max: { inwardNumber: true } });
+    return res.json({ nextInward: (max._max.inwardNumber ?? 0) + 1 });
+  } catch (err) {
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
 // GET /purchases/:id
 router.get('/:id', async (req: Request, res: Response) => {
   try {
@@ -127,140 +129,220 @@ router.get('/:id', async (req: Request, res: Response) => {
   }
 });
 
-// POST /purchases
+// POST /purchases — record a purchase, its line items, stock batches and the
+// supplier balance. Accepts the frontend payload (qty/purchaseRate/batchNo/…).
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const { supplierId, items, invoiceNumber, invoiceDate, dueDate, notes } = req.body;
+    const body = req.body ?? {};
+    const supplierId = body.supplierId;
+    const items: any[] = Array.isArray(body.items) ? body.items : [];
+    const invoiceNumber = body.invoiceNumber ?? body.invoiceNo;
+    const invoiceDate = body.invoiceDate;
+    const otherCharges = Number(body.otherCharges ?? 0);
+    const paidAmount = Number(body.paidAmount ?? 0);
 
     if (!supplierId) return res.status(400).json({ message: 'supplierId is required' });
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ message: 'items must be a non-empty array' });
-    }
-    for (const item of items) {
-      if (!item.medicineId) return res.status(400).json({ message: 'Each item must have a medicineId' });
-      if (!item.quantity || item.quantity < 1) return res.status(400).json({ message: 'Each item must have quantity >= 1' });
-      if (item.costPrice === undefined || item.costPrice < 0) return res.status(400).json({ message: 'Each item must have a valid costPrice' });
-      if (!item.batchNumber) return res.status(400).json({ message: 'Each item must have a batchNumber' });
-      if (!item.expiryDate) return res.status(400).json({ message: 'Each item must have an expiryDate' });
+    if (!invoiceNumber) return res.status(400).json({ message: 'invoiceNumber is required' });
+    if (items.length === 0) return res.status(400).json({ message: 'Add at least one item' });
+
+    // Normalise each item to the fields we need (frontend uses qty/purchaseRate/batchNo).
+    const norm = items.map((it) => ({
+      medicineId: it.medicineId,
+      quantity: Number(it.quantity ?? it.qty ?? 0),
+      freeQty: Number(it.freeQty ?? 0),
+      purchaseRate: Number(it.purchaseRate ?? it.costPrice ?? 0),
+      saleRate: Number(it.saleRate ?? 0),
+      mrp: Number(it.mrp ?? 0),
+      gstRate: Number(it.gstRate ?? it.taxRate ?? 0),
+      batchNumber: String(it.batchNo ?? it.batchNumber ?? '').trim(),
+      expiryDate: it.expiryDate ? new Date(it.expiryDate) : null,
+    }));
+
+    for (const it of norm) {
+      if (!it.medicineId) return res.status(400).json({ message: 'Each item must have a medicineId' });
+      if (!it.quantity || it.quantity < 1) return res.status(400).json({ message: 'Each item needs quantity >= 1' });
+      if (!it.batchNumber) return res.status(400).json({ message: 'Each item needs a batch number' });
+      if (!it.expiryDate) return res.status(400).json({ message: 'Each item needs an expiry date' });
     }
 
-    const purchaseNumber = await generatePurchaseNumber();
+    const storeId = await resolveStoreId(req);
+    if (!storeId) return res.status(400).json({ message: 'No store configured' });
+
+    // Totals.
+    const taxable = norm.reduce((s, it) => s + it.quantity * it.purchaseRate, 0);
+    const gstAmount = norm.reduce((s, it) => s + (it.quantity * it.purchaseRate * it.gstRate) / 100, 0);
+    const netAmount = taxable + gstAmount + otherCharges;
+    const paymentStatus = paidAmount >= netAmount ? 'PAID' : paidAmount > 0 ? 'PARTIAL' : 'PENDING';
 
     const purchase = await prisma.$transaction(async (tx) => {
-      let subtotal = 0;
-      let totalTax = 0;
+      // Strictly incremental inward number.
+      const maxInward = await tx.purchase.aggregate({ _max: { inwardNumber: true } });
+      const inwardNumber = (maxInward._max.inwardNumber ?? 0) + 1;
 
-      const processedItems = items.map((item: any) => {
-        const itemTotal = item.quantity * item.costPrice;
-        const taxAmount = (itemTotal * (item.taxRate ?? 0)) / 100;
-        subtotal += itemTotal;
-        totalTax += taxAmount;
-        return { ...item, total: itemTotal + taxAmount };
-      });
-
-      // Create purchase record
-      const newPurchase = await tx.purchase.create({
+      const created = await tx.purchase.create({
         data: {
-          purchaseNumber,
+          inwardNumber,
           supplierId,
-          subtotal,
-          taxAmount: totalTax,
-          totalAmount: subtotal + totalTax,
-          invoiceNumber,
-          invoiceDate: invoiceDate ? new Date(invoiceDate) : null,
-          dueDate: dueDate ? new Date(dueDate) : null,
-          notes,
-          purchaseDate: new Date(),
-          items: {
-            create: processedItems.map((item: any) => ({
-              medicineId: item.medicineId,
-              quantity: item.quantity,
-              costPrice: item.costPrice,
-              taxRate: item.taxRate ?? 0,
-              batchNumber: item.batchNumber,
-              expiryDate: new Date(item.expiryDate),
-              mrp: item.mrp ?? null,
-              total: item.total,
-            })),
-          },
+          storeId,
+          invoiceNumber: String(invoiceNumber),
+          invoiceDate: invoiceDate ? new Date(invoiceDate) : new Date(),
+          status: 'RECEIVED',
+          totalAmount: taxable,
+          gstAmount,
+          otherCharges,
+          netAmount,
+          paidAmount,
+          paymentStatus,
+          createdBy: (req as any).user?.userId ?? null,
         },
-        include: { items: true },
       });
 
-      // Update or create medicine batches
-      for (const item of processedItems) {
-        const existingBatch = await tx.medicineBatch.findFirst({
-          where: {
-            medicineId: item.medicineId,
-            batchNumber: item.batchNumber,
-          },
-        });
+      for (const it of norm) {
+        const lineAmount = it.quantity * it.purchaseRate * (1 + it.gstRate / 100);
 
-        if (existingBatch) {
-          await tx.medicineBatch.update({
-            where: { id: existingBatch.id },
-            data: { availableQty: { increment: item.quantity } },
-          });
-        } else {
-          await tx.medicineBatch.create({
+        // Upsert the stock batch (medicineId + batchNumber + storeId is unique).
+        const existing = await tx.medicineBatch.findUnique({
+          where: { medicineId_batchNumber_storeId: { medicineId: it.medicineId, batchNumber: it.batchNumber, storeId } },
+        });
+        let batchId: string;
+        if (existing) {
+          const upd = await tx.medicineBatch.update({
+            where: { id: existing.id },
             data: {
-              medicineId: item.medicineId,
-              batchNumber: item.batchNumber,
-              expiryDate: new Date(item.expiryDate),
-              costPrice: item.costPrice,
-              mrp: item.mrp ?? null,
-              availableQty: item.quantity,
+              availableQty: { increment: it.quantity + it.freeQty },
+              quantity: { increment: it.quantity + it.freeQty },
+              purchaseRate: it.purchaseRate || existing.purchaseRate,
+              mrp: it.mrp || existing.mrp,
+              saleRate: it.saleRate || existing.saleRate,
+              expiryDate: it.expiryDate ?? existing.expiryDate,
+              supplierId,
+              purchaseId: created.id,
             },
           });
+          batchId = upd.id;
+        } else {
+          const nb = await tx.medicineBatch.create({
+            data: {
+              medicineId: it.medicineId,
+              batchNumber: it.batchNumber,
+              expiryDate: it.expiryDate!,
+              purchaseRate: it.purchaseRate,
+              mrp: it.mrp,
+              saleRate: it.saleRate || it.mrp,
+              quantity: it.quantity + it.freeQty,
+              availableQty: it.quantity + it.freeQty,
+              storeId,
+              supplierId,
+              purchaseId: created.id,
+            },
+          });
+          batchId = nb.id;
         }
+
+        await tx.purchaseItem.create({
+          data: {
+            purchaseId: created.id,
+            medicineId: it.medicineId,
+            batchId,
+            quantity: it.quantity,
+            freeQty: it.freeQty,
+            purchaseRate: it.purchaseRate,
+            mrp: it.mrp,
+            gstRate: it.gstRate,
+            amount: lineAmount,
+            expiryDate: it.expiryDate,
+            batchNumber: it.batchNumber,
+          },
+        });
       }
 
-      // Update supplier balance
+      // Increase what we owe the supplier (net minus what was paid now).
       await tx.supplier.update({
         where: { id: supplierId },
-        data: { balance: { increment: subtotal + totalTax } },
+        data: { balance: { increment: netAmount - paidAmount } },
       });
 
-      return newPurchase;
-    });
+      return created;
+    }, { timeout: 20000, maxWait: 8000 });
 
-    res.status(201).json(purchase);
+    return res.status(201).json(purchase);
   } catch (err: any) {
-    if (err.code === 'P2025') {
-      return res.status(404).json({ message: 'Supplier not found' });
+    if (err.code === 'P2002') {
+      return res.status(409).json({ message: 'A purchase with this invoice number already exists for this supplier.' });
     }
-    res.status(500).json({ message: 'Internal server error' });
+    if (err.code === 'P2025') return res.status(404).json({ message: 'Supplier not found' });
+    console.error('[purchase create]', err);
+    return res.status(500).json({ message: 'Internal server error' });
   }
 });
 
-// PUT /purchases/:id/payment
+// PUT /purchases/:id/payment — mark a purchase paid/partial and (optionally)
+// record the payment (method + date) as a Payment row.
+const PAY_STATUS: Record<string, any> = { pending: 'PENDING', partial: 'PARTIAL', paid: 'PAID' };
+const PAY_METHOD: Record<string, any> = { cash: 'CASH', cheque: 'CHEQUE', upi: 'UPI', neft: 'NET_BANKING', card: 'CARD' };
+
 router.put('/:id/payment', async (req: Request, res: Response) => {
   try {
-    const { paymentStatus, paidAmount } = req.body;
-
-    if (!paymentStatus) {
-      return res.status(400).json({ message: 'paymentStatus is required' });
+    const { paymentStatus, paidAmount, paymentMethod, paymentDate } = req.body;
+    const statusKey = String(paymentStatus || '').toLowerCase();
+    if (!PAY_STATUS[statusKey]) {
+      return res.status(400).json({ message: 'paymentStatus must be one of: pending, partial, paid' });
     }
 
-    const allowedStatuses = ['pending', 'partial', 'paid'];
-    if (!allowedStatuses.includes(paymentStatus)) {
-      return res.status(400).json({ message: `paymentStatus must be one of: ${allowedStatuses.join(', ')}` });
-    }
+    const existing = await prisma.purchase.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ message: 'Purchase not found' });
 
-    const purchase = await prisma.purchase.update({
-      where: { id: req.params.id },
-      data: {
-        paymentStatus,
-        ...(paidAmount !== undefined && { paidAmount: Number(paidAmount) }),
-      },
+    const oldPaid = Number(existing.paidAmount);
+    const newPaid = statusKey === 'paid'
+      ? Number(existing.netAmount)
+      : statusKey === 'pending'
+      ? 0
+      : (paidAmount !== undefined ? Number(paidAmount) : oldPaid);
+    const deltaPaid = newPaid - oldPaid; // amount settled now
+
+    // Core, must-succeed update: bill status/paid + supplier outstanding.
+    const purchase = await prisma.$transaction(async (tx) => {
+      const updated = await tx.purchase.update({
+        where: { id: req.params.id },
+        data: { paymentStatus: PAY_STATUS[statusKey], paidAmount: newPaid },
+      });
+      if (deltaPaid !== 0) {
+        await tx.supplier.update({
+          where: { id: existing.supplierId },
+          data: { balance: { decrement: deltaPaid } },
+        });
+      }
+      return updated;
     });
 
-    res.json(purchase);
+    // Best-effort payment-history row (its shared referenceId relation can be
+    // finicky; never let it roll back the settled payment above).
+    if (paymentMethod && statusKey !== 'pending' && deltaPaid > 0) {
+      try {
+        const method = PAY_METHOD[String(paymentMethod).toLowerCase()] ?? 'CASH';
+        await prisma.payment.create({
+          data: {
+            type: 'PURCHASE_PAYMENT',
+            referenceId: purchase.id,
+            referenceType: 'PURCHASE',
+            amount: deltaPaid,
+            method,
+            supplierId: existing.supplierId,
+            ...(paymentDate ? { createdAt: new Date(paymentDate) } : {}),
+          },
+        });
+      } catch (e) {
+        console.warn('[purchase payment] payment-row skipped:', (e as any)?.message);
+      }
+    }
+
+    return res.json(purchase);
   } catch (err: any) {
     if (err.code === 'P2025') {
       return res.status(404).json({ message: 'Purchase not found' });
     }
-    res.status(500).json({ message: 'Internal server error' });
+    console.error('[purchase payment]', err);
+    return res.status(500).json({ message: 'Internal server error' });
   }
 });
 

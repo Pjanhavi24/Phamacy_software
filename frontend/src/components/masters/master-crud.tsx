@@ -38,6 +38,7 @@ export interface MasterColumn {
   key: string;
   label: string;
   mono?: boolean;
+  boolean?: boolean; // render true/false as Yes/No
   className?: string;
 }
 
@@ -45,7 +46,7 @@ export interface MasterField {
   key: string;
   label: string;
   required?: boolean;
-  type?: "text" | "textarea" | "select";
+  type?: "text" | "textarea" | "select" | "checkbox";
   options?: string[];
   placeholder?: string;
   /** Shown as read-only (e.g. an auto-assigned code on edit). */
@@ -190,7 +191,11 @@ export function MasterCrud({
                           c.className
                         )}
                       >
-                        {row[c.key] === null || row[c.key] === undefined || row[c.key] === "" ? "—" : String(row[c.key])}
+                        {c.boolean
+                          ? (row[c.key]
+                              ? <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-950/40">Yes</span>
+                              : <span className="text-gray-400">No</span>)
+                          : row[c.key] === null || row[c.key] === undefined || row[c.key] === "" ? "—" : String(row[c.key])}
                       </TableCell>
                     ))}
                     <TableCell className="text-right">
@@ -307,11 +312,23 @@ function FormModal({
         </div>
         <div className="grid grid-cols-2 gap-x-4 gap-y-3 p-4">
           {fields.map((f) => (
-            <div key={f.key} className={f.full || f.type === "textarea" ? "col-span-2" : ""}>
-              <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
-                {f.label} {f.required && <span className="text-red-500">*</span>}
-              </label>
-              {f.type === "select" ? (
+            <div key={f.key} className={f.full || f.type === "textarea" || f.type === "checkbox" ? "col-span-2" : ""}>
+              {f.type !== "checkbox" && (
+                <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                  {f.label} {f.required && <span className="text-red-500">*</span>}
+                </label>
+              )}
+              {f.type === "checkbox" ? (
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-blue-600"
+                    checked={!!form[f.key]}
+                    onChange={(e) => set(f.key, e.target.checked)}
+                  />
+                  {f.label}
+                </label>
+              ) : f.type === "select" ? (
                 <select
                   className={ds.field}
                   value={form[f.key] ?? ""}

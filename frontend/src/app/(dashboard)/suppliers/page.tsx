@@ -8,7 +8,10 @@ import {
   ShoppingCart,
   CreditCard,
   RefreshCw,
+  Pencil,
+  Trash2,
 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -71,7 +74,63 @@ import { z } from "zod";
 import { SupplierForm } from "@/components/suppliers/supplier-form";
 import Link from "next/link";
 import { format, differenceInDays } from "date-fns";
+import { useQuery } from "@tanstack/react-query";
+import { apiClient } from "@/lib/api";
 import { useSuppliers, useSupplierLedger } from "@/hooks/useSuppliers";
+import { SupplierPaymentDialog } from "@/components/suppliers/supplier-payment-dialog";
+
+// Shared fetch + date-filter for the Purchases / Payments tabs.
+interface SupplierInvoice {
+  id: string;
+  invoiceNumber: string;
+  date: string;
+  amount: number;
+  paymentStatus: string;
+}
+function useSupplierInvoices(supplierId: string | undefined, enabled: boolean) {
+  return useQuery<SupplierInvoice[]>({
+    queryKey: ["supplier-purchases", supplierId],
+    enabled: enabled && !!supplierId,
+    queryFn: async () => {
+      const r = await apiClient.get("/purchases", { params: { supplierId, limit: 300 } });
+      const list: any[] = r.data?.purchases ?? r.data?.data ?? (Array.isArray(r.data) ? r.data : []);
+      return list
+        .map((p) => ({
+          id: String(p.id),
+          invoiceNumber: String(p.invoiceNumber ?? p.invoiceNo ?? p.id),
+          date: p.invoiceDate ?? p.createdAt ?? "",
+          amount: Number(p.netAmount ?? p.totalAmount ?? 0),
+          paymentStatus: String(p.paymentStatus ?? "pending").toLowerCase(),
+        }))
+        .sort((a, b) => +new Date(b.date) - +new Date(a.date));
+    },
+  });
+}
+// Date filter: `from`/`to` (either may be blank). A single date (from==to or
+// only from) limits to that day.
+function inRange(d: string, from: string, to: string): boolean {
+  if (!from && !to) return true;
+  const t = new Date(d).setHours(0, 0, 0, 0);
+  if (from && t < new Date(from).setHours(0, 0, 0, 0)) return false;
+  const hi = to || from;
+  if (hi && t > new Date(hi).setHours(0, 0, 0, 0)) return false;
+  return true;
+}
+function InvoiceDateFilter({
+  from, to, setFrom, setTo,
+}: { from: string; to: string; setFrom: (v: string) => void; setTo: (v: string) => void }) {
+  return (
+    <div className="mb-2 flex items-center gap-2 text-xs">
+      <span className="text-gray-500 dark:text-gray-400">From</span>
+      <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-8 rounded-md border border-gray-300 bg-white px-2 dark:border-gray-700 dark:bg-gray-950" />
+      <span className="text-gray-500 dark:text-gray-400">To</span>
+      <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-8 rounded-md border border-gray-300 bg-white px-2 dark:border-gray-700 dark:bg-gray-950" />
+      {(from || to) && (
+        <button onClick={() => { setFrom(""); setTo(""); }} className="text-blue-600 hover:underline">Clear</button>
+      )}
+    </div>
+  );
+}
 import type { Supplier } from "@/hooks/useSuppliers";
 
 // --- helpers ---
@@ -196,6 +255,11 @@ function SupplierDetailSheet({
   const { data: ledger = [], isLoading: ledgerLoading } = useSupplierLedger(
     open ? supplier.id : undefined
   );
+  const { data: invoices = [], isLoading: invLoading } = useSupplierInvoices(supplier.id as string, open);
+  const [pFrom, setPFrom] = useState(""); const [pTo, setPTo] = useState("");
+  const [payFrom, setPayFrom] = useState(""); const [payTo, setPayTo] = useState("");
+  const purchaseRows = invoices.filter((i) => inRange(i.date, pFrom, pTo));
+  const paidRows = invoices.filter((i) => i.paymentStatus === "paid" && inRange(i.date, payFrom, payTo));
 
   const outstanding = (supplier.balance as number) ?? (supplier.outstandingBalance as number) ?? 0;
   const creditLimit = (supplier.creditLimit as number) ?? 0;
@@ -298,31 +362,36 @@ function SupplierDetailSheet({
               )}
             </TabsContent>
 
-            {/* Purchases */}
+            {/* Purchases — all purchases, with a date-range filter */}
             <TabsContent value="purchases" className="mt-3">
-              {purchases.length === 0 ? (
-                <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-6">No purchases yet.</p>
+              <InvoiceDateFilter from={pFrom} to={pTo} setFrom={setPFrom} setTo={setPTo} />
+              {invLoading ? (
+                <div className="space-y-2">{[1,2,3].map((i) => <Skeleton key={i} className="h-9 w-full" />)}</div>
+              ) : purchaseRows.length === 0 ? (
+                <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-6">No purchases in this range.</p>
               ) : (
-                <Table>
+                <Table className="[&_td]:py-1.5 [&_td]:text-xs [&_th]:h-8 [&_th]:text-[11px]">
                   <TableHeader>
                     <TableRow>
-                      <TableHead>PO #</TableHead>
+                      <TableHead className="w-10">Sr No</TableHead>
+                      <TableHead>Invoice Number</TableHead>
                       <TableHead>Date</TableHead>
-                      <TableHead>Items</TableHead>
-                      <TableHead>Status</TableHead>
                       <TableHead className="text-right">Amount</TableHead>
+                      <TableHead className="text-center">Payment Status</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {purchases.map((po) => (
-                      <TableRow key={po.id}>
-                        <TableCell className="font-mono text-blue-600">{po.id}</TableCell>
-                        <TableCell>{format(new Date(po.date), "dd MMM yyyy")}</TableCell>
-                        <TableCell className="text-gray-500 dark:text-gray-400">{po.items ?? "—"}</TableCell>
-                        <TableCell>
-                          <Badge variant={po.status === "Received" ? "default" : "secondary"}>{po.status}</Badge>
+                    {purchaseRows.map((p, i) => (
+                      <TableRow key={p.id}>
+                        <TableCell className="text-gray-400">{i + 1}</TableCell>
+                        <TableCell className="font-mono text-blue-600">{p.invoiceNumber}</TableCell>
+                        <TableCell>{format(new Date(p.date), "dd MMM yyyy")}</TableCell>
+                        <TableCell className="text-right font-semibold">₹{p.amount.toLocaleString()}</TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant={p.paymentStatus === "paid" ? "default" : p.paymentStatus === "partial" ? "secondary" : "outline"}>
+                            {p.paymentStatus}
+                          </Badge>
                         </TableCell>
-                        <TableCell className="text-right font-semibold">₹{po.amount.toLocaleString()}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -330,27 +399,30 @@ function SupplierDetailSheet({
               )}
             </TabsContent>
 
-            {/* Payments */}
+            {/* Payments — paid bills only, with a date-range filter */}
             <TabsContent value="payments" className="mt-3">
-              {payments.length === 0 ? (
-                <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-6">No payments recorded.</p>
+              <InvoiceDateFilter from={payFrom} to={payTo} setFrom={setPayFrom} setTo={setPayTo} />
+              {invLoading ? (
+                <div className="space-y-2">{[1,2,3].map((i) => <Skeleton key={i} className="h-9 w-full" />)}</div>
+              ) : paidRows.length === 0 ? (
+                <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-6">No paid bills in this range.</p>
               ) : (
-                <Table>
+                <Table className="[&_td]:py-1.5 [&_td]:text-xs [&_th]:h-8 [&_th]:text-[11px]">
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-10">Sr No</TableHead>
+                      <TableHead>Invoice Number</TableHead>
                       <TableHead>Date</TableHead>
-                      <TableHead>Method</TableHead>
-                      <TableHead>Reference</TableHead>
                       <TableHead className="text-right">Amount</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {payments.map((pay) => (
-                      <TableRow key={pay.id}>
-                        <TableCell>{format(new Date(pay.date), "dd MMM yyyy")}</TableCell>
-                        <TableCell><Badge variant="outline">{pay.method}</Badge></TableCell>
-                        <TableCell className="font-mono text-sm">{pay.reference ?? "—"}</TableCell>
-                        <TableCell className="text-right font-semibold text-green-600">₹{pay.amount.toLocaleString()}</TableCell>
+                    {paidRows.map((p, i) => (
+                      <TableRow key={p.id}>
+                        <TableCell className="text-gray-400">{i + 1}</TableCell>
+                        <TableCell className="font-mono text-blue-600">{p.invoiceNumber}</TableCell>
+                        <TableCell>{format(new Date(p.date), "dd MMM yyyy")}</TableCell>
+                        <TableCell className="text-right font-semibold text-green-600">₹{p.amount.toLocaleString()}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -390,6 +462,7 @@ function TableSkeleton() {
 export default function SuppliersPage() {
   const [search, setSearch] = useState("");
   const [addOpen, setAddOpen] = useState(false);
+  const [editSupplier, setEditSupplier] = useState<Supplier | null>(null);
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
   const [paymentSupplier, setPaymentSupplier] = useState<Supplier | null>(null);
 
@@ -476,18 +549,15 @@ export default function SuppliersPage() {
       {/* Table */}
       <Panel className="overflow-hidden">
         <div className="overflow-x-auto">
-        <Table>
+        <Table className="[&_td]:px-2 [&_td]:py-1.5 [&_td]:text-xs [&_th]:h-8 [&_th]:px-2 [&_th]:text-[11px]">
           <TableHeader>
             <TableRow>
               <TableHead>Code</TableHead>
               <TableHead>Name</TableHead>
-              <TableHead>GSTIN</TableHead>
               <TableHead>Phone</TableHead>
               <TableHead>Contact Person</TableHead>
               <TableHead className="text-right">Total Purchases</TableHead>
               <TableHead>Outstanding</TableHead>
-              <TableHead>Last Purchase</TableHead>
-              <TableHead>Status</TableHead>
               <TableHead>Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -496,7 +566,7 @@ export default function SuppliersPage() {
               <TableSkeleton />
             ) : filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={10} className="p-0">
+                <TableCell colSpan={7} className="p-0">
                   <TableEmpty
                     icon={Building2}
                     title="No suppliers found"
@@ -516,23 +586,17 @@ export default function SuppliersPage() {
 
                 return (
                   <TableRow key={String(supplier.id)} className="hover:bg-muted/30 dark:hover:bg-gray-800/50">
-                    <TableCell className="font-mono text-sm text-gray-600 dark:text-gray-400">
+                    <TableCell className="font-mono text-gray-600 dark:text-gray-400">
                       {(supplier.code as string) || "—"}
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-xs font-bold text-blue-600 flex-shrink-0">
-                          {getInitials(supplier.name)}
-                        </div>
-                        <button
-                          className="font-medium hover:underline text-left text-blue-600"
-                          onClick={() => setSelectedSupplier(supplier)}
-                        >
-                          {supplier.name}
-                        </button>
-                      </div>
+                      <button
+                        className="font-medium hover:underline text-left text-blue-600"
+                        onClick={() => setSelectedSupplier(supplier)}
+                      >
+                        {supplier.name}
+                      </button>
                     </TableCell>
-                    <TableCell className="font-mono text-sm">{(supplier.gstin as string) ?? "—"}</TableCell>
                     <TableCell>{supplier.phone ?? "—"}</TableCell>
                     <TableCell>{contactPerson}</TableCell>
                     <TableCell className="text-right font-medium">
@@ -543,45 +607,33 @@ export default function SuppliersPage() {
                         ₹{outstanding.toLocaleString()}
                       </span>
                       {isOverdue && (
-                        <Badge variant="destructive" className="ml-2 text-xs">Overdue</Badge>
+                        <Badge variant="destructive" className="ml-2 text-[10px]">Overdue</Badge>
                       )}
                     </TableCell>
                     <TableCell>
-                      {lastPurchase
-                        ? format(new Date(lastPurchase), "dd MMM yyyy")
-                        : <span className="text-gray-500 dark:text-gray-400">—</span>}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={outstanding === 0 ? "default" : isOverdue ? "destructive" : "secondary"}>
-                        {outstanding === 0 ? "Clear" : isOverdue ? "Overdue" : "Active"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
                       <div className="flex items-center gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          title="View Ledger"
-                          onClick={() => setSelectedSupplier(supplier)}
-                        >
+                        <Button variant="ghost" size="icon" className="h-7 w-7" title="Edit supplier" onClick={() => setEditSupplier(supplier)}>
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500 hover:text-red-600" title="Delete supplier"
+                          onClick={() => {
+                            if (confirm(`Delete supplier "${supplier.name}"?`)) {
+                              apiClient.delete(`/suppliers/${supplier.id}`)
+                                .then(() => { toast.success("Supplier deleted."); refetch(); })
+                                .catch((e: any) => toast.error(e?.response?.data?.message || "Could not delete supplier."));
+                            }
+                          }}>
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7" title="View Ledger" onClick={() => setSelectedSupplier(supplier)}>
                           <Eye className="w-4 h-4" />
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          title="New Purchase"
-                          asChild
-                        >
+                        <Button variant="ghost" size="icon" className="h-7 w-7" title="New Purchase" asChild>
                           <Link href={`/purchase?supplier=${supplier.id}`}>
                             <ShoppingCart className="w-4 h-4" />
                           </Link>
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          title="Record Payment"
-                          onClick={() => setPaymentSupplier(supplier)}
-                        >
+                        <Button variant="ghost" size="icon" className="h-7 w-7" title="Record Payment" onClick={() => setPaymentSupplier(supplier)}>
                           <CreditCard className="w-4 h-4" />
                         </Button>
                       </div>
@@ -604,15 +656,28 @@ export default function SuppliersPage() {
         />
       )}
 
-      {/* Quick payment dialog */}
-      {paymentSupplier && (
-        <RecordPaymentDialog
-          open={!!paymentSupplier}
-          onOpenChange={(v) => { if (!v) setPaymentSupplier(null); }}
-          supplierName={paymentSupplier.name}
-          maxAmount={(paymentSupplier.balance as number) ?? (paymentSupplier.outstandingBalance as number) ?? 0}
-        />
-      )}
+      {/* Edit supplier slide-over */}
+      <Sheet open={!!editSupplier} onOpenChange={(v) => { if (!v) setEditSupplier(null); }}>
+        <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>Edit Supplier</SheetTitle>
+          </SheetHeader>
+          {editSupplier && (
+            <div className="mt-4">
+              <SupplierForm
+                defaultValues={editSupplier as any}
+                onSuccess={() => { setEditSupplier(null); refetch(); }}
+              />
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
+
+      {/* Comprehensive record-payment popup */}
+      <SupplierPaymentDialog
+        supplier={paymentSupplier}
+        onClose={() => setPaymentSupplier(null)}
+      />
     </PageContainer>
   );
 }

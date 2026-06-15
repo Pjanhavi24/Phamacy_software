@@ -65,6 +65,7 @@ import {
   TableEmpty,
 } from "@/components/design-system";
 import { useTabDirty } from "@/components/workspace/workspace-context";
+import { printBarcodeLabels, FullInwardBarcodeDialog, type BarcodeItem } from "@/components/purchase/barcode-inward";
 
 // --- Types ---
 
@@ -112,6 +113,7 @@ interface PurchaseItem {
   mrp: number;
   purchaseRate: number; // bill rate
   saleRate: number;
+  cdPct: number; // cash discount %
   schemeType: "percent" | "amount";
   schemeValue: number;
   gstRate: number;
@@ -120,6 +122,7 @@ interface PurchaseItem {
 
 interface Purchase {
   id: string;
+  inwardNumber?: number | null;
   invoiceNo: string;
   supplierName: string;
   date: string;
@@ -172,9 +175,23 @@ const STATUS_CFG = {
 
 // --- Helpers ---
 
+// Safe unique id — crypto.randomUUID() only exists in secure contexts (HTTPS /
+// localhost). The dev server binds 0.0.0.0, so over a LAN IP it's undefined and
+// throws. Fall back to a timestamp+random id there.
+function uid(): string {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+  } catch {
+    /* not available */
+  }
+  return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function emptyItem(): PurchaseItem {
   return {
-    id: crypto.randomUUID(),
+    id: uid(),
     medicineId: "",
     medicineName: "",
     batchNo: "",
@@ -185,6 +202,7 @@ function emptyItem(): PurchaseItem {
     mrp: 0,
     purchaseRate: 0,
     saleRate: 0,
+    cdPct: 0,
     schemeType: "percent",
     schemeValue: 0,
     gstRate: 5,
@@ -192,14 +210,16 @@ function emptyItem(): PurchaseItem {
   };
 }
 
-// Taxable value after applying the scheme (by % or by flat amount) on the line.
+// Taxable value after applying the scheme (by % or flat) and cash discount (CD%).
 function lineTaxable(item: PurchaseItem): number {
   const base = item.qty * item.purchaseRate;
   const scheme =
     item.schemeType === "percent"
       ? (base * (item.schemeValue || 0)) / 100
       : item.schemeValue || 0;
-  return Math.max(0, base - scheme);
+  const afterScheme = Math.max(0, base - scheme);
+  const cd = (afterScheme * (item.cdPct || 0)) / 100;
+  return Math.max(0, afterScheme - cd);
 }
 
 function calcAmount(item: PurchaseItem): number {
@@ -421,21 +441,59 @@ function NewPurchaseForm() {
   const [batchOpts, setBatchOpts] = useState<PurchaseBatchOption[]>([]);
   const [batchLoading, setBatchLoading] = useState(false);
 
+  // Barcode printing — per-row checkboxes + the Full Inward window.
+  const [checkedItems, setCheckedItems] = useState<Set<string>>(new Set());
+  const [inwardOpen, setInwardOpen] = useState(false);
+  const toggleCheck = (id: string) =>
+    setCheckedItems((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  const toBarcodeItems = (list: PurchaseItem[]): BarcodeItem[] =>
+    list
+      .filter((i) => i.medicineName && i.medicineId)
+      .map((i) => ({
+        id: i.id,
+        name: i.medicineName,
+        code: String(i.medicineId).slice(-10).toUpperCase(),
+        batch: i.batchNo,
+        expiry: i.expiryDate,
+        mrp: i.mrp,
+        qty: i.qty + i.freeQty,
+      }));
+
   const excelInputRef = useRef<HTMLInputElement>(null);
 
   // Payment
   const [otherCharges, setOtherCharges] = useState(0);
   const [paidAmount, setPaidAmount] = useState("0");
+  const [placedOrderId, setPlacedOrderId] = useState("");
+  const [remarks, setRemarks] = useState("");
 
   // Fetch suppliers
   const { data: supplierList = FALLBACK_SUPPLIERS } = useQuery<Supplier[]>({
     queryKey: ["suppliers"],
     queryFn: () =>
-      apiClient.get("/suppliers").then((r) => {
+      apiClient.get("/suppliers", { params: { limit: 500 } }).then((r) => {
         const d = r.data;
-        return Array.isArray(d) ? d : Array.isArray(d?.data) ? d.data : FALLBACK_SUPPLIERS;
+        // Backend returns { suppliers, total, ... }; tolerate array / { data }.
+        const list = Array.isArray(d)
+          ? d
+          : Array.isArray(d?.suppliers)
+          ? d.suppliers
+          : Array.isArray(d?.data)
+          ? d.data
+          : [];
+        return list.length > 0 ? list : FALLBACK_SUPPLIERS;
       }),
     placeholderData: FALLBACK_SUPPLIERS,
+  });
+
+  // The inward number the next saved purchase will get (strictly incremental).
+  const { data: nextInward } = useQuery<number>({
+    queryKey: ["next-inward"],
+    queryFn: () => apiClient.get("/purchases/next-inward").then((r) => Number(r.data?.nextInward ?? 0)),
   });
 
   const mutation = useMutation({
@@ -444,6 +502,7 @@ function NewPurchaseForm() {
     onSuccess: () => {
       toast.success("Purchase saved successfully!");
       queryClient.invalidateQueries({ queryKey: ["purchases"] });
+      queryClient.invalidateQueries({ queryKey: ["next-inward"] });
       setSupplier(null);
       setSupplierQuery("");
       setInvoiceNo("");
@@ -545,6 +604,7 @@ function NewPurchaseForm() {
         gstRate: med.gstRate ?? 5,
         mrp: med.mrp ?? 0,
         saleRate: med.rate ?? 0,
+        cdPct: Number((supplier as any)?.cdPct) || 0,
       };
       ni.amount = calcAmount(ni);
       setItems((prev) => [...prev, ni]);
@@ -605,6 +665,8 @@ function NewPurchaseForm() {
       gstRate: med.gstRate ?? 5,
       mrp: med.mrp ?? 0,
       saleRate: med.rate ?? 0,
+      // Auto-apply the supplier's saved cash discount to every new row.
+      cdPct: Number((supplier as any)?.cdPct) || 0,
     };
     ni.amount = calcAmount(ni);
     setItems((prev) => [...prev, ni]);
@@ -778,6 +840,27 @@ function NewPurchaseForm() {
   const grandTotal = taxableAmt + totalGst + otherCharges;
   const creditAmt = Math.max(0, grandTotal - parseFloat(paidAmount || "0"));
 
+  // Margin = (sale value − purchase value) across all lines.
+  const purchaseValue = items.reduce((s, i) => s + i.qty * i.purchaseRate, 0);
+  const saleValue = items.reduce((s, i) => s + i.qty * i.saleRate, 0);
+  const marginAmt = saleValue - purchaseValue;
+  const marginPct = purchaseValue > 0 ? (marginAmt / purchaseValue) * 100 : 0;
+
+  // Scheme + CD discount totals (for the summary footer).
+  const schemeTotal = items.reduce((s, i) => {
+    const base = i.qty * i.purchaseRate;
+    return s + (i.schemeType === "percent" ? (base * (i.schemeValue || 0)) / 100 : i.schemeValue || 0);
+  }, 0);
+  const cdTotal = items.reduce((s, i) => {
+    const base = i.qty * i.purchaseRate;
+    const scheme = i.schemeType === "percent" ? (base * (i.schemeValue || 0)) / 100 : i.schemeValue || 0;
+    return s + (Math.max(0, base - scheme) * (i.cdPct || 0)) / 100;
+  }, 0);
+  const roundOff = Math.round(grandTotal) - grandTotal;
+  const orderTotal = Math.round(grandTotal);
+  const totalQty = items.reduce((s, i) => s + i.qty, 0);
+  const itemCount = items.filter((i) => i.medicineName).length;
+
   const handleSave = (print = false) => {
     if (!supplier) { toast.error("Please select a supplier."); return; }
     if (!invoiceNo) { toast.error("Please enter invoice number."); return; }
@@ -798,6 +881,13 @@ function NewPurchaseForm() {
       return;
     }
 
+    // Bill (purchase) rate must never exceed the sale rate.
+    const overpriced = named.filter((i) => i.saleRate > 0 && i.purchaseRate > i.saleRate);
+    if (overpriced.length > 0) {
+      toast.error(`Bill rate cannot be greater than sale rate (${overpriced.length} item(s)).`);
+      return;
+    }
+
     // Every imported row must be linked to a catalog medicine before saving.
     const unmatched = named.filter((i) => !i.medicineId);
     if (unmatched.length > 0) {
@@ -809,39 +899,48 @@ function NewPurchaseForm() {
 
     if (validItems.length === 0) { toast.error("Add at least one medicine."); return; }
 
-    mutation.mutate({
-      supplierId: supplier.id,
-      invoiceNo,
-      invoiceDate,
-      dueDate: dueDate || undefined,
-      paymentTerms,
-      // Send a real end-of-month date for the MM/YY expiry the user entered.
-      items: validItems.map((i) => ({ ...i, expiryDate: toExpiryISO(i.expiryDate) })),
-      otherCharges,
-      paidAmount: parseFloat(paidAmount || "0"),
-      creditAmount: creditAmt,
-      taxableAmount: taxableAmt,
-      cgst,
-      sgst,
-      totalGst,
-      grandTotal,
-    });
-    if (print) setTimeout(() => window.print(), 500);
+    // Capture barcodes before the cart is cleared on success.
+    const barcodeItems = toBarcodeItems(validItems);
+
+    mutation.mutate(
+      {
+        supplierId: supplier.id,
+        invoiceNo,
+        invoiceDate,
+        dueDate: dueDate || undefined,
+        paymentTerms,
+        // Send a real end-of-month date for the MM/YY expiry the user entered.
+        items: validItems.map((i) => ({ ...i, expiryDate: toExpiryISO(i.expiryDate) })),
+        otherCharges,
+        paidAmount: parseFloat(paidAmount || "0"),
+        creditAmount: creditAmt,
+        taxableAmount: taxableAmt,
+        cgst,
+        sgst,
+        totalGst,
+        grandTotal,
+      },
+      // Save & Print → after saving, fire barcode labels to the printer.
+      { onSuccess: () => { if (print) printBarcodeLabels(barcodeItems); } }
+    );
   };
 
   return (
     <div className="space-y-3">
       {/* ===================== BILL DETAILS (single-line strip) ===================== */}
-      <section className="flex flex-wrap items-end gap-3 border-b border-gray-200 px-1 pb-3 dark:border-gray-800">
-        {/* Supplier (wide) */}
-        <div className="min-w-[200px] flex-1">
-          <label className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Supplier *</label>
+      <section className="flex items-end gap-3 overflow-x-auto border-b border-gray-200 px-1 pb-3 dark:border-gray-800">
+        {/* Inward number (auto, strictly incremental) — larger label field */}
+        <div className="w-24">
+          <label className="mb-0.5 block text-[10px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Inward No</label>
+          <div className="flex h-8 items-center justify-center rounded-md border border-blue-200 bg-blue-50 px-2 text-base font-semibold text-blue-700 dark:border-blue-900 dark:bg-blue-950/40">
+            #{nextInward ?? "…"}
+          </div>
+        </div>
+        <div className="w-56">
+          <label className="mb-0.5 block text-[10px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Supplier *</label>
           {supplier ? (
             <div className="flex h-8 items-center justify-between rounded-md border border-blue-200 bg-blue-50 px-2.5 dark:border-blue-900 dark:bg-blue-950/40">
-              <div className="min-w-0 truncate">
-                <span className="text-xs font-medium text-gray-900 dark:text-gray-100">{supplier.name}</span>
-                {supplier.gstin && <span className="ml-1.5 text-[11px] text-gray-500 dark:text-gray-400">{supplier.gstin}</span>}
-              </div>
+              <span className="min-w-0 truncate text-xs font-medium text-gray-900 dark:text-gray-100">{supplier.name}</span>
               <button onClick={() => { setSupplier(null); setSupplierQuery(""); }} className="shrink-0 text-gray-400 hover:text-red-500 dark:text-gray-500">
                 <X size={13} />
               </button>
@@ -874,23 +973,44 @@ function NewPurchaseForm() {
         </div>
         {/* Invoice Number */}
         <div className="w-32">
-          <label className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Invoice No *</label>
+          <label className="mb-0.5 block text-[10px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Invoice No *</label>
           <Input value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} placeholder="INV-001" className="h-8 text-xs" />
         </div>
         {/* Invoice Date */}
         <div className="w-36">
-          <label className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Invoice Date</label>
+          <label className="mb-0.5 block text-[10px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Invoice Date</label>
           <Input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} className="h-8 text-xs" />
         </div>
-        {/* Import Excel (on the same line) */}
-        <button
-          type="button"
-          onClick={() => excelInputRef.current?.click()}
-          title="Import items from an Excel/CSV file"
-          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-green-600 px-2.5 text-xs font-medium text-green-700 transition-colors hover:bg-green-50 dark:border-green-800 dark:text-green-400 dark:hover:bg-green-950/30"
-        >
-          <FileSpreadsheet className="h-3.5 w-3.5" /> Import Excel
-        </button>
+
+        {/* Right corner: barcode + import actions */}
+        <div className="ml-auto flex items-end gap-2">
+          <button
+            type="button"
+            onClick={() => { if (items.some((i) => i.medicineId)) setInwardOpen(true); else toast.error("Add items first."); }}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-blue-600 px-2.5 text-xs font-medium text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-400 dark:hover:bg-blue-950/30"
+          >
+            <Barcode className="h-3.5 w-3.5" /> Print Full Inward Barcode
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const chosen = toBarcodeItems(items.filter((i) => checkedItems.has(i.id)));
+              if (chosen.length === 0) { toast.error("Tick the rows whose barcode you want to print."); return; }
+              printBarcodeLabels(chosen);
+            }}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-gray-300 px-2.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+          >
+            <Barcode className="h-3.5 w-3.5" /> Print Single Barcode
+          </button>
+          <button
+            type="button"
+            onClick={() => excelInputRef.current?.click()}
+            title="Import items from an Excel/CSV file"
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-green-600 px-2.5 text-xs font-medium text-green-700 transition-colors hover:bg-green-50 dark:border-green-800 dark:text-green-400 dark:hover:bg-green-950/30"
+          >
+            <FileSpreadsheet className="h-3.5 w-3.5" /> Import Excel
+          </button>
+        </div>
         <input
           ref={excelInputRef}
           type="file"
@@ -915,19 +1035,33 @@ function NewPurchaseForm() {
         <div className="min-h-[360px] max-h-[calc(100vh-300px)] overflow-auto">
           <table className="w-full min-w-[1140px] text-xs">
             <thead className="sticky top-0 z-10 bg-slate-800 text-white">
-              <tr>
-                <th className="w-8 px-3 py-2.5 text-left font-semibold">#</th>
-                <th className="min-w-[220px] px-3 py-2.5 text-left font-semibold">Item Name</th>
-                <th className="w-44 px-3 py-2.5 text-left font-semibold">Batch No</th>
-                <th className="w-28 px-3 py-2.5 text-left font-semibold">Expiry</th>
-                <th className="w-16 px-3 py-2.5 text-center font-semibold">Qty</th>
-                <th className="w-20 px-3 py-2.5 text-right font-semibold">MRP</th>
-                <th className="w-20 px-3 py-2.5 text-right font-semibold">Bill Rate</th>
-                <th className="w-20 px-3 py-2.5 text-right font-semibold">Sale Rate</th>
-                <th className="w-32 px-3 py-2.5 text-center font-semibold">Scheme</th>
-                <th className="w-20 px-3 py-2.5 text-center font-semibold">GST%</th>
-                <th className="w-24 px-3 py-2.5 text-right font-semibold">Amount</th>
-                <th className="w-10 px-3 py-2.5"></th>
+              <tr className="[&_th]:px-2 [&_th]:py-2 [&_th]:text-[11px] [&_th]:font-medium">
+                <th className="w-8 text-left">#</th>
+                <th className="w-8 text-center">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 accent-blue-600 align-middle"
+                    title="Select all"
+                    checked={items.length > 0 && items.every((i) => checkedItems.has(i.id))}
+                    onChange={(e) =>
+                      setCheckedItems(e.target.checked ? new Set(items.map((i) => i.id)) : new Set())
+                    }
+                  />
+                </th>
+                <th className="min-w-[190px] text-left">Item Name</th>
+                <th className="w-36 text-left">Batch No</th>
+                <th className="w-20 text-left">Expiry</th>
+                <th className="w-24 text-right">Bill Rate</th>
+                <th className="w-24 text-right">Sale Rate</th>
+                <th className="w-16 text-center">Margin</th>
+                <th className="w-24 text-right">MRP</th>
+                <th className="w-16 text-center">Qty</th>
+                <th className="w-16 text-center">Free</th>
+                <th className="w-16 text-center">CD%</th>
+                <th className="w-28 text-center">Scheme</th>
+                <th className="w-20 text-center">GST%</th>
+                <th className="w-24 text-right">Amount</th>
+                <th className="w-9"></th>
               </tr>
             </thead>
             <tbody>
@@ -936,8 +1070,16 @@ function NewPurchaseForm() {
                     key={item.id}
                     className="border-b border-gray-100 hover:bg-blue-50/40 dark:border-gray-800 dark:hover:bg-blue-950/30"
                   >
-                    <td className="px-3 py-2.5 text-gray-400 dark:text-gray-500">{idx + 1}</td>
-                    <td className="px-3 py-2.5 font-medium text-gray-900 dark:text-gray-100">
+                    <td className="px-2 py-1.5 text-xs text-gray-400 dark:text-gray-500">{idx + 1}</td>
+                    <td className="px-1 py-1.5 text-center">
+                      <input
+                        type="checkbox"
+                        className="h-3.5 w-3.5 accent-blue-600 align-middle"
+                        checked={checkedItems.has(item.id)}
+                        onChange={() => toggleCheck(item.id)}
+                      />
+                    </td>
+                    <td className="px-2 py-1.5 text-xs font-medium text-gray-900 dark:text-gray-100">
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
@@ -959,14 +1101,14 @@ function NewPurchaseForm() {
                         )}
                       </div>
                     </td>
-                    <td className="relative px-3 py-2.5">
+                    <td className="relative px-1 py-1.5">
                       <Input
                         value={item.batchNo}
                         onChange={(e) => updateItem(item.id, { batchNo: e.target.value })}
                         onFocus={() => openBatches(item.id, item.medicineId)}
                         onBlur={() => setTimeout(() => setBatchRow((r) => (r === item.id ? null : r)), 150)}
                         placeholder="Batch"
-                        className="h-8 text-xs"
+                        className="h-8 w-full px-1.5 text-xs"
                       />
                       {batchRow === item.id && (
                         <div className="absolute left-3 right-3 top-full z-40 mt-0.5 max-h-56 min-w-[260px] overflow-auto rounded-md border border-green-200 bg-white shadow-xl dark:border-green-900 dark:bg-gray-900">
@@ -998,7 +1140,7 @@ function NewPurchaseForm() {
                         </div>
                       )}
                     </td>
-                    <td className="px-3 py-2.5">
+                    <td className="px-1 py-1.5">
                       <Input
                         value={item.expiryDate}
                         onChange={(e) => updateItem(item.id, { expiryDate: formatExpiryInput(e.target.value) })}
@@ -1007,25 +1149,46 @@ function NewPurchaseForm() {
                         inputMode="numeric"
                         title={item.expiryDate && isNearExpiry(item.expiryDate, expRefDate) ? `Expires within ${NEAR_EXPIRY_MONTHS} months of the bill date — not allowed` : undefined}
                         className={cn(
-                          "h-8 text-xs",
+                          "h-8 w-full px-1.5 text-xs",
                           item.expiryDate && isNearExpiry(item.expiryDate, expRefDate) &&
                             "border-red-500 bg-red-50 text-red-600 focus:border-red-500 focus:ring-red-200 dark:border-red-600 dark:bg-red-950/30 dark:text-red-400"
                         )}
                       />
                     </td>
-                    <td className="px-3 py-2.5">
-                      <Input type="number" min={1} value={item.qty} onChange={(e) => updateItem(item.id, { qty: parseInt(e.target.value) || 0 })} className="h-8 text-center text-xs" />
+                    <td className="px-1 py-1.5">
+                      <Input
+                        type="number" min={0} step={0.01} value={item.purchaseRate || ""}
+                        onChange={(e) => updateItem(item.id, { purchaseRate: parseFloat(e.target.value) || 0 })}
+                        title={item.saleRate > 0 && item.purchaseRate > item.saleRate ? "Bill rate cannot exceed sale rate" : undefined}
+                        className={cn(
+                          "h-8 w-full px-1.5 text-right text-xs",
+                          item.saleRate > 0 && item.purchaseRate > item.saleRate &&
+                            "border-red-500 bg-red-50 text-red-600 focus:border-red-500 dark:border-red-600 dark:bg-red-950/30 dark:text-red-400"
+                        )}
+                      />
                     </td>
-                    <td className="px-3 py-2.5">
-                      <Input type="number" min={0} step={0.01} value={item.mrp || ""} onChange={(e) => updateItem(item.id, { mrp: parseFloat(e.target.value) || 0 })} className="h-8 text-right text-xs" />
+                    <td className="px-1 py-1.5">
+                      <Input type="number" min={0} step={0.01} value={item.saleRate || ""} onChange={(e) => updateItem(item.id, { saleRate: parseFloat(e.target.value) || 0 })} className="h-8 w-full px-1.5 text-right text-xs" />
                     </td>
-                    <td className="px-3 py-2.5">
-                      <Input type="number" min={0} step={0.01} value={item.purchaseRate || ""} onChange={(e) => updateItem(item.id, { purchaseRate: parseFloat(e.target.value) || 0 })} className="h-8 text-right text-xs" />
+                    <td className="px-1 py-1.5 text-center text-xs font-medium">
+                      {(() => {
+                        const m = item.purchaseRate > 0 ? ((item.saleRate - item.purchaseRate) / item.purchaseRate) * 100 : 0;
+                        return <span className={m < 0 ? "text-red-600" : "text-green-700 dark:text-green-400"}>{m.toFixed(1)}%</span>;
+                      })()}
                     </td>
-                    <td className="px-3 py-2.5">
-                      <Input type="number" min={0} step={0.01} value={item.saleRate || ""} onChange={(e) => updateItem(item.id, { saleRate: parseFloat(e.target.value) || 0 })} className="h-8 text-right text-xs" />
+                    <td className="px-1 py-1.5">
+                      <Input type="number" min={0} step={0.01} value={item.mrp || ""} onChange={(e) => updateItem(item.id, { mrp: parseFloat(e.target.value) || 0 })} className="h-8 w-full px-1.5 text-right text-xs" />
                     </td>
-                    <td className="px-3 py-2.5">
+                    <td className="px-1 py-1.5">
+                      <Input type="number" min={1} value={item.qty} onChange={(e) => updateItem(item.id, { qty: parseInt(e.target.value) || 0 })} className="h-8 w-full px-1 text-center text-xs" />
+                    </td>
+                    <td className="px-1 py-1.5">
+                      <Input type="number" min={0} value={item.freeQty || ""} onChange={(e) => updateItem(item.id, { freeQty: parseInt(e.target.value) || 0 })} placeholder="0" className="h-8 w-full px-1 text-center text-xs" />
+                    </td>
+                    <td className="px-1 py-1.5">
+                      <Input type="number" min={0} max={100} step={0.01} value={item.cdPct || ""} onChange={(e) => updateItem(item.id, { cdPct: Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)) })} placeholder="0" className="h-8 w-full px-1 text-center text-xs" />
+                    </td>
+                    <td className="px-1 py-1.5">
                       <div className="flex items-center gap-1">
                         <select
                           value={item.schemeType}
@@ -1035,12 +1198,12 @@ function NewPurchaseForm() {
                           <option value="percent">%</option>
                           <option value="amount">₹</option>
                         </select>
-                        <Input type="number" min={0} step={0.01} value={item.schemeValue || ""} onChange={(e) => updateItem(item.id, { schemeValue: parseFloat(e.target.value) || 0 })} placeholder="0" className="h-8 w-16 text-right text-xs" />
+                        <Input type="number" min={0} step={0.01} value={item.schemeValue || ""} onChange={(e) => updateItem(item.id, { schemeValue: parseFloat(e.target.value) || 0 })} placeholder="0" className="h-8 w-14 px-1 text-right text-xs" />
                       </div>
                     </td>
-                    <td className="px-3 py-2.5">
+                    <td className="px-1 py-1.5">
                       <Select value={String(item.gstRate)} onValueChange={(v) => updateItem(item.id, { gstRate: parseFloat(v) })}>
-                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                        <SelectTrigger className="h-8 px-1.5 text-xs"><SelectValue /></SelectTrigger>
                         <SelectContent>
                           {GST_RATES.map((r) => (
                             <SelectItem key={r} value={String(r)}>{r}%</SelectItem>
@@ -1048,8 +1211,8 @@ function NewPurchaseForm() {
                         </SelectContent>
                       </Select>
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2.5 text-right font-semibold text-gray-900 dark:text-gray-100">₹{item.amount.toFixed(2)}</td>
-                    <td className="px-3 py-2.5 text-center">
+                    <td className="whitespace-nowrap px-2 py-1.5 text-right text-xs font-semibold text-gray-900 dark:text-gray-100">₹{item.amount.toFixed(2)}</td>
+                    <td className="px-1 py-1.5 text-center">
                       <button onClick={() => removeItem(item.id)} className="rounded p-1 text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40">
                         <Trash2 className="h-4 w-4" />
                       </button>
@@ -1061,6 +1224,7 @@ function NewPurchaseForm() {
                   bottom and moves down each time an item is added. */}
               <tr className="border-b border-gray-100 dark:border-gray-800 bg-blue-50/30 dark:bg-blue-950/20">
                 <td className="px-3 py-2 text-gray-400 dark:text-gray-500">{items.length + 1}</td>
+                <td className="px-1 py-2"></td>
                 <td className="relative px-3 py-2">
                   <div className="relative">
                     <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
@@ -1112,7 +1276,7 @@ function NewPurchaseForm() {
                     </div>
                   )}
                 </td>
-                <td colSpan={10} className="px-3 py-2 text-xs text-gray-400 dark:text-gray-500">
+                <td colSpan={13} className="px-3 py-2 text-xs text-gray-400 dark:text-gray-500">
                   {items.length === 0 ? "Start typing a product name to search and add." : ""}
                 </td>
               </tr>
@@ -1122,39 +1286,76 @@ function NewPurchaseForm() {
       </div>
       </div>
 
-      {/* Footer: compact — total on top, tax details below, slim actions */}
-      <div className="sticky bottom-0 border-t border-gray-200 dark:border-gray-800 bg-white px-3 py-1.5 dark:bg-gray-900">
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
-          {/* Totals (total above, tax below) */}
-          <div className="flex flex-col">
-            <span className="text-base font-bold text-blue-700">Total: ₹{grandTotal.toFixed(2)}</span>
-            <span className="flex flex-wrap gap-x-3 text-[11px] text-gray-500 dark:text-gray-400">
-              <span>Items {items.filter((i) => i.medicineName).length}</span>
-              <span>Qty {items.reduce((s, i) => s + i.qty, 0)}</span>
-              <span>Taxable ₹{taxableAmt.toFixed(2)}</span>
-              <span>CGST ₹{cgst.toFixed(2)}</span>
-              <span>SGST ₹{sgst.toFixed(2)}</span>
-              <span>GST ₹{totalGst.toFixed(2)}</span>
-            </span>
+      {/* Thin status strip (Net CP / GST / HSN / next inward) */}
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-0.5 border-t border-gray-200 bg-gray-100 px-3 py-1 text-[11px] text-gray-600 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-400">
+        <span>
+          Net CP <b className="text-gray-800 dark:text-gray-200">₹{purchaseValue.toFixed(2)}</b> · CGST ₹{cgst.toFixed(2)} · SGST ₹{sgst.toFixed(2)} · IGST ₹0.00 · HSN 3004 ·
+          Margin <b className={marginAmt < 0 ? "text-red-600" : "text-green-700 dark:text-green-400"}>{marginPct.toFixed(1)}%</b>
+        </span>
+        <span>Inward No: <b className="text-blue-600">#{nextInward ?? "…"}</b></span>
+      </div>
+
+      {/* ===================== YELLOW SUMMARY FOOTER ===================== */}
+      <footer className="sticky bottom-0 border-t-2 border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30">
+        <div className="flex flex-wrap items-stretch gap-3 px-3 py-2">
+          {/* Metrics grid */}
+          <div className="grid min-w-[260px] grid-cols-2 gap-x-5 gap-y-0.5 text-[11px]">
+            <Metric label="Items / Qty" value={`${itemCount} / ${totalQty}`} />
+            <Metric label="Scheme (₹)" value={schemeTotal.toFixed(2)} />
+            <Metric label="CD (₹)" value={cdTotal.toFixed(2)} />
+            <Metric label="Tax Total (₹)" value={totalGst.toFixed(2)} />
+            <Metric label="Add / Less" value={roundOff.toFixed(2)} />
+            <Metric label="Gross Total (₹)" value={grandTotal.toFixed(2)} />
           </div>
-          {/* Action buttons (slim) */}
-          <div className="flex flex-shrink-0 gap-2">
-            <Button variant="outline" size="sm" className="h-8"
+
+          {/* Order id + remarks */}
+          <div className="flex min-w-[220px] flex-1 flex-col justify-center gap-1.5">
+            <input value={placedOrderId} onChange={(e) => setPlacedOrderId(e.target.value)} placeholder="Placed Order Id"
+              className="h-8 w-full rounded-md border border-amber-200 bg-white px-2 text-xs outline-none focus:border-amber-500 dark:border-amber-900 dark:bg-gray-900" />
+            <input value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Remarks"
+              className="h-8 w-full rounded-md border border-amber-200 bg-white px-2 text-xs outline-none focus:border-amber-500 dark:border-amber-900 dark:bg-gray-900" />
+          </div>
+
+          {/* Order total */}
+          <div className="flex flex-col items-end justify-center px-3">
+            <span className="text-[10px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Order Total</span>
+            <span className="text-2xl font-extrabold text-gray-900 dark:text-gray-100">₹{orderTotal.toLocaleString()}</span>
+          </div>
+
+          {/* Actions */}
+          <div className="flex flex-shrink-0 items-center gap-2">
+            <Button variant="outline" size="sm" className="h-9"
               onClick={() => { setSupplier(null); setInvoiceNo(""); setItems([]); }}>
               Cancel
             </Button>
-            <Button variant="outline" size="sm" onClick={() => handleSave(true)} disabled={mutation.isPending}
-              className="h-8 border-blue-600 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30 disabled:opacity-50">
-              <Printer className="mr-1.5 h-3.5 w-3.5" /> Save &amp; Print
+            <Button size="sm" onClick={() => handleSave(true)} disabled={mutation.isPending}
+              className="h-9 bg-slate-800 px-4 text-white hover:bg-slate-700 disabled:opacity-50">
+              <Printer className="mr-1.5 h-4 w-4" /> Save &amp; Barcode
             </Button>
             <Button size="sm" onClick={() => handleSave(false)} disabled={mutation.isPending}
-              className="h-8 px-5 disabled:opacity-50">
-              <Save className="mr-1.5 h-3.5 w-3.5" />
-              {mutation.isPending ? "Saving..." : "Save"}
+              className="h-9 px-6 disabled:opacity-50">
+              <Save className="mr-1.5 h-4 w-4" />
+              {mutation.isPending ? "Saving..." : "Save [Ctrl+S]"}
             </Button>
           </div>
         </div>
-      </div>
+
+        {/* Keyboard shortcut bar */}
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-0.5 border-t border-amber-200 bg-amber-100/60 px-3 py-1 text-[10px] text-gray-600 dark:border-amber-900 dark:bg-amber-950/40 dark:text-gray-400">
+          {[
+            ["Ctrl+A", "Add Detail"],
+            ["Ctrl+D", "Remove Detail"],
+            ["Ctrl+S", "Save"],
+            ["F10", "Generate Barcode"],
+            ["F12", "Import Excel"],
+          ].map(([k, l]) => (
+            <span key={k} className="flex items-center gap-1">
+              <kbd className="rounded border border-gray-300 bg-white px-1 font-mono text-[9px] text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">{k}</kbd>
+              {l}
+            </span>
+          ))}
+        </div>
+      </footer>
 
       {/* Product picker modal */}
       <ProductPickerModal
@@ -1163,6 +1364,22 @@ function NewPurchaseForm() {
         onClose={() => setPickerRow(undefined)}
         onPick={pickProduct}
       />
+
+      {/* Full Inward barcode print window */}
+      <FullInwardBarcodeDialog
+        open={inwardOpen}
+        items={toBarcodeItems(items)}
+        onClose={() => setInwardOpen(false)}
+      />
+    </div>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-gray-500 dark:text-gray-400">{label}</span>
+      <span className="font-semibold text-gray-900 dark:text-gray-100">{value}</span>
     </div>
   );
 }
@@ -1178,20 +1395,42 @@ function SumRow({ label, value, className = "" }: { label: string; value: string
 
 // --- Purchase History ---
 
-function PurchaseHistory() {
+function PurchaseHistory({ onEdit }: { onEdit?: (p: Purchase) => void }) {
   const [selectedPurchase, setSelectedPurchase] = useState<Purchase | null>(null);
   const [dateFilter, setDateFilter] = useState("month");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
   const [supplierFilter, setSupplierFilter] = useState("all");
   const [search, setSearch] = useState("");
 
-  const { data: purchases = FALLBACK_HISTORY, isLoading } = useQuery<Purchase[]>({
+  const { data: purchases = [], isLoading } = useQuery<Purchase[]>({
     queryKey: ["purchases", dateFilter],
     queryFn: () =>
-      apiClient.get("/purchases", { params: { period: dateFilter } }).then((r) => {
+      apiClient.get("/purchases", { params: { limit: 200 } }).then((r) => {
         const d = r.data;
-        return Array.isArray(d) ? d : Array.isArray(d?.data) ? d.data : FALLBACK_HISTORY;
+        const list: any[] = Array.isArray(d?.purchases)
+          ? d.purchases
+          : Array.isArray(d)
+          ? d
+          : Array.isArray(d?.data)
+          ? d.data
+          : [];
+        // Map the backend shape → the table's Purchase shape (no mock fallback).
+        return list.map((p) => {
+          const status = String(p.paymentStatus ?? "").toUpperCase();
+          return {
+            id: String(p.id),
+            inwardNumber: p.inwardNumber ?? null,
+            invoiceNo: String(p.invoiceNumber ?? p.invoiceNo ?? p.id),
+            supplierName: String(p.supplier?.name ?? p.supplierName ?? "—"),
+            date: p.invoiceDate ?? p.date ?? p.createdAt ?? "",
+            itemCount: Array.isArray(p.items) ? p.items.length : (p.itemCount ?? 0),
+            totalAmount: Number(p.netAmount ?? p.totalAmount ?? 0),
+            paidAmount: Number(p.paidAmount ?? 0),
+            status: status === "PAID" ? "paid" : status === "PARTIAL" ? "partial" : "credit",
+          } as Purchase;
+        });
       }),
-    placeholderData: FALLBACK_HISTORY,
   });
 
   const { data: purchaseDetail } = useQuery<Purchase>({
@@ -1205,7 +1444,15 @@ function PurchaseHistory() {
   const filtered = purchases.filter((p) => {
     const matchSearch = !search || p.invoiceNo.toLowerCase().includes(search.toLowerCase()) || p.supplierName.toLowerCase().includes(search.toLowerCase());
     const matchSupplier = supplierFilter === "all" || p.supplierName === supplierFilter;
-    return matchSearch && matchSupplier;
+    // Custom date range (a single date works if only "from" is set).
+    let matchDate = true;
+    if (dateFilter === "custom" && (customFrom || customTo)) {
+      const t = new Date(p.date).setHours(0, 0, 0, 0);
+      if (customFrom && t < new Date(customFrom).setHours(0, 0, 0, 0)) matchDate = false;
+      const hi = customTo || customFrom;
+      if (hi && t > new Date(hi).setHours(0, 0, 0, 0)) matchDate = false;
+    }
+    return matchSearch && matchSupplier && matchDate;
   });
 
   const exportCSV = () => {
@@ -1224,7 +1471,38 @@ function PurchaseHistory() {
   const statusColor = (s: string) =>
     STATUS_CFG[s as keyof typeof STATUS_CFG]?.color ?? "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-800";
 
-  const detailData = purchaseDetail ?? selectedPurchase;
+  // Map the raw /purchases/:id response into the table's Purchase shape.
+  // (Without this, totalAmount is a Decimal string and .toFixed() throws.)
+  const detailData: Purchase | null = (() => {
+    const p: any = purchaseDetail;
+    if (!p) return selectedPurchase;
+    const fmtExp = (d: any) => {
+      if (!d) return "";
+      const dt = new Date(d);
+      return isNaN(dt.getTime()) ? String(d) : `${String(dt.getMonth() + 1).padStart(2, "0")}/${String(dt.getFullYear()).slice(-2)}`;
+    };
+    const st = String(p.paymentStatus ?? "").toUpperCase();
+    return {
+      id: String(p.id),
+      invoiceNo: String(p.invoiceNumber ?? p.invoiceNo ?? selectedPurchase?.invoiceNo ?? ""),
+      supplierName: p.supplier?.name ?? p.supplierName ?? selectedPurchase?.supplierName ?? "—",
+      date: fmtExp(p.invoiceDate ?? p.date) || (selectedPurchase?.date ?? ""),
+      itemCount: Array.isArray(p.items) ? p.items.length : (selectedPurchase?.itemCount ?? 0),
+      totalAmount: Number(p.netAmount ?? p.totalAmount ?? selectedPurchase?.totalAmount ?? 0),
+      paidAmount: Number(p.paidAmount ?? 0),
+      totalGst: Number(p.gstAmount ?? 0),
+      status: st === "PAID" ? "paid" : st === "PARTIAL" ? "partial" : "credit",
+      items: (Array.isArray(p.items) ? p.items : []).map((it: any) => ({
+        medicineName: it.medicine?.name ?? it.medicineName ?? "Item",
+        batchNo: it.batchNumber ?? it.batchNo ?? "",
+        expiryDate: fmtExp(it.expiryDate),
+        qty: Number(it.quantity ?? it.qty ?? 0),
+        purchaseRate: Number(it.purchaseRate ?? 0),
+        gstRate: Number(it.gstRate ?? 0),
+        amount: Number(it.amount ?? 0),
+      })),
+    } as Purchase;
+  })();
 
   return (
     <div className="space-y-4">
@@ -1252,6 +1530,16 @@ function PurchaseHistory() {
                 </SelectContent>
               </Select>
             </div>
+            {dateFilter === "custom" && (
+              <div className="space-y-1">
+                <Label className="text-xs text-gray-500 dark:text-gray-400">Date range</Label>
+                <div className="flex items-center gap-1">
+                  <Input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} className="h-8 w-36 text-sm bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800" />
+                  <span className="text-xs text-gray-400">to</span>
+                  <Input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} className="h-8 w-36 text-sm bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800" />
+                </div>
+              </div>
+            )}
             <div className="space-y-1">
               <Label className="text-xs text-gray-500 dark:text-gray-400">Supplier</Label>
               <Select value={supplierFilter} onValueChange={setSupplierFilter}>
@@ -1291,7 +1579,7 @@ function PurchaseHistory() {
             <Table>
               <TableHeader>
                 <TableRow className="border-gray-200 dark:border-gray-800 hover:bg-transparent">
-                  {["Invoice #", "Supplier", "Date", "Items", "Amount", "Paid", "Balance", "Status", ""].map((h) => (
+                  {["Inward #", "Invoice #", "Supplier", "Date", "Items", "Amount", "Paid", "Balance", "Status", ""].map((h) => (
                     <TableHead key={h} className="text-gray-500 dark:text-gray-400 text-xs">{h}</TableHead>
                   ))}
                 </TableRow>
@@ -1301,7 +1589,9 @@ function PurchaseHistory() {
                   const balance = p.totalAmount - (p.paidAmount ?? 0);
                   return (
                     <TableRow key={p.id} className="border-gray-200 dark:border-gray-800 hover:bg-blue-50/40 dark:hover:bg-blue-950/30 cursor-pointer"
-                      onClick={() => setSelectedPurchase(p)}>
+                      title="Open this bill to edit"
+                      onClick={() => onEdit?.(p)}>
+                      <TableCell className="font-mono text-xs font-semibold text-blue-600">#{p.inwardNumber ?? "—"}</TableCell>
                       <TableCell className="text-gray-900 dark:text-gray-100 font-mono text-xs">{p.invoiceNo}</TableCell>
                       <TableCell className="text-gray-700 dark:text-gray-300 text-sm">{p.supplierName}</TableCell>
                       <TableCell className="text-gray-500 dark:text-gray-400 text-xs">{p.date}</TableCell>
@@ -1399,9 +1689,40 @@ function PurchaseHistory() {
 // --- Main Page ---
 
 export default function PurchasePage() {
+  const [tab, setTab] = useState("new");
+
+  // Load a saved purchase into the New Purchase form for editing (re-entry).
+  const editBill = async (p: Purchase) => {
+    try {
+      const res = await apiClient.get(`/purchases/${p.id}`);
+      const d: any = res.data ?? {};
+      const items = (Array.isArray(d.items) ? d.items : []).map((it: any) => ({
+        medicineName: it.medicine?.name ?? it.medicineName ?? "",
+        batchNo: it.batchNumber ?? "",
+        expiryDate: it.expiryDate ?? "",
+        qty: Number(it.quantity ?? 0),
+        freeQty: Number(it.freeQty ?? 0),
+        mrp: Number(it.mrp ?? 0),
+        purchaseRate: Number(it.purchaseRate ?? 0),
+        saleRate: Number(it.saleRate ?? 0),
+        gstRate: Number(it.gstRate ?? 0),
+        schemeValue: 0,
+      }));
+      sessionStorage.setItem("pharma_purchase_import", JSON.stringify({
+        supplierName: d.supplier?.name ?? p.supplierName,
+        invoiceNumber: d.invoiceNumber ?? p.invoiceNo,
+        invoiceDate: d.invoiceDate ? String(d.invoiceDate).slice(0, 10) : undefined,
+        items,
+      }));
+      setTab("new");
+    } catch {
+      toast.error("Could not load the bill for editing.");
+    }
+  };
+
   return (
     <PageContainer>
-      <Tabs defaultValue="new" className="space-y-3">
+      <Tabs value={tab} onValueChange={setTab} className="space-y-3">
         {/* Compact top menu bar */}
         <div className="flex items-center gap-1 border-b border-gray-200 dark:border-gray-800">
           <TabsList className="h-auto gap-1 bg-transparent p-0">
@@ -1430,15 +1751,9 @@ export default function PurchasePage() {
           >
             <Mail className="h-3.5 w-3.5" /> Import from Gmail
           </Link>
-          <Link
-            href="/barcode"
-            className="flex items-center gap-1 border-b-2 border-transparent px-3 py-1.5 text-xs font-medium text-gray-500 transition-colors hover:text-blue-600 dark:text-gray-400"
-          >
-            <Barcode className="h-3.5 w-3.5" /> Print Barcode
-          </Link>
         </div>
         <TabsContent value="new"><NewPurchaseForm /></TabsContent>
-        <TabsContent value="history"><PurchaseHistory /></TabsContent>
+        <TabsContent value="history"><PurchaseHistory onEdit={editBill} /></TabsContent>
       </Tabs>
     </PageContainer>
   );

@@ -133,6 +133,41 @@ router.get('/low-stock', async (_req: Request, res: Response) => {
   }
 });
 
+// GET /medicines/:id/purchases — every batch received for this item, across all
+// suppliers (supplier, batch, expiry, qty). Used by the Expiry-Alert popup.
+router.get('/:id/purchases', async (req: Request, res: Response) => {
+  try {
+    const batches = await prisma.medicineBatch.findMany({
+      where: { medicineId: req.params.id },
+      orderBy: { expiryDate: 'asc' },
+      select: {
+        id: true,
+        batchNumber: true,
+        expiryDate: true,
+        quantity: true,
+        availableQty: true,
+        supplier: { select: { name: true } },
+      },
+    });
+    const med = await prisma.medicine.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, name: true, packing: true },
+    });
+    return res.json({
+      medicine: med,
+      rows: batches.map((b) => ({
+        supplierName: b.supplier?.name ?? '—',
+        batchNumber: b.batchNumber,
+        expiryDate: b.expiryDate,
+        quantity: b.quantity,
+        availableQty: b.availableQty,
+      })),
+    });
+  } catch (err) {
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
 // GET /medicines/:id/batches — sellable batches (qty > 0, not expired), FEFO
 // order. Used by billing to let the cashier pick a specific batch.
 router.get('/:id/batches', async (req: Request, res: Response) => {

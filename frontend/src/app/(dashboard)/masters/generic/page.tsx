@@ -15,11 +15,13 @@ export default function GenericMasterPage() {
         { key: "name", label: "Name" },
         { key: "schedule", label: "Schedule", className: "w-24" },
         { key: "dosage", label: "Dosage", className: "w-32" },
+        { key: "ndps", label: "NDPS", boolean: true, className: "w-20" },
       ]}
       fields={[
         { key: "name", label: "Name", required: true, full: true },
         { key: "schedule", label: "Schedule", type: "select", options: ["H", "H1", "X", "G", "OTC"] },
         { key: "dosage", label: "Dosage", placeholder: "e.g. Tablet, Syrup (optional)" },
+        { key: "ndps", label: "NDPS substance (narcotic)", type: "checkbox", full: true },
       ]}
     />
   );

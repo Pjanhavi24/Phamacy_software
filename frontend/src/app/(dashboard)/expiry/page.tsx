@@ -20,9 +20,11 @@ import {
   ds,
 } from "@/components/design-system";
 import { apiClient } from "@/lib/api";
+import { PurchaseHistoryDialog } from "@/components/reports/purchase-history-dialog";
 
 interface ExpiringItem {
   id: string;
+  medicine_id: string;
   medicine_name: string;
   brand: string;
   batch_number: string;
@@ -113,6 +115,9 @@ export default function ExpiryPage() {
   const [actionNote, setActionNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [processedIds, setProcessedIds] = useState<Set<string>>(new Set());
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  // Medicine whose purchase history popup is open.
+  const [purchaseItem, setPurchaseItem] = useState<{ id: string; name: string } | null>(null);
 
   useEffect(() => {
     fetchExpiring();
@@ -121,12 +126,14 @@ export default function ExpiryPage() {
   async function fetchExpiring() {
     setLoading(true);
     try {
-      const res = await apiClient.get("/inventory/expiring", { params: { days: 365 } });
+      // Alert window: only items expiring within 90 days (or already expired).
+      const res = await apiClient.get("/inventory/expiring", { params: { days: 90 } });
       const batches: any[] = res.data?.batches ?? res.data?.items ?? res.data ?? [];
       const mapped: ExpiringItem[] = batches.map((b) => {
         const expiry = b.expiryDate ?? b.expiry_date ?? "";
         return {
           id: b.id,
+          medicine_id: b.medicine?.id ?? b.medicineId ?? "",
           medicine_name: b.medicine?.name ?? b.medicine_name ?? "",
           brand: b.medicine?.genericName ?? "",
           batch_number: b.batchNumber ?? b.batch_number ?? "",
@@ -173,6 +180,34 @@ export default function ExpiryPage() {
       ),
     [filtered]
   );
+
+  // Keep the highlighted row within range as the list changes.
+  useEffect(() => {
+    setSelectedIndex((i) => (filtered.length === 0 ? 0 : Math.min(i, filtered.length - 1)));
+  }, [filtered.length]);
+
+  // Keyboard navigation: ↑/↓ move the highlight, Enter opens the purchase popup.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      if (actionModal || purchaseItem) return; // a popup is open
+      if (filtered.length === 0) return;
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSelectedIndex((i) => Math.min(i + 1, filtered.length - 1));
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSelectedIndex((i) => Math.max(i - 1, 0));
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        const it = filtered[selectedIndex];
+        if (it) setPurchaseItem({ id: it.medicine_id, name: it.medicine_name });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [filtered, selectedIndex, actionModal, purchaseItem]);
 
   async function handleAction() {
     if (!actionModal) return;
@@ -277,12 +312,15 @@ export default function ExpiryPage() {
                 {filtered.map((item, idx) => (
                   <tr
                     key={item.id}
-                    className={`${getRowClass(item.days_left)} hover:brightness-95 transition-all`}
+                    onClick={() => { setSelectedIndex(idx); setPurchaseItem({ id: item.medicine_id, name: item.medicine_name }); }}
+                    className={`${getRowClass(item.days_left)} hover:brightness-95 transition-all cursor-pointer ${
+                      idx === selectedIndex ? "ring-1 ring-inset ring-blue-400" : ""
+                    }`}
                   >
                     <td className="px-2 py-1.5 text-center text-xs text-gray-500 dark:text-gray-400 font-medium">
                       {idx + 1}
                     </td>
-                    <td className="px-2 py-1.5 text-xs font-semibold text-gray-900 dark:text-gray-100">
+                    <td className="px-2 py-1.5 text-xs font-semibold text-blue-700 hover:underline dark:text-blue-400">
                       {item.medicine_name}
                     </td>
                     <td className="px-2 py-1.5">
@@ -318,7 +356,7 @@ export default function ExpiryPage() {
                         {item.location}
                       </span>
                     </td>
-                    <td className="px-2 py-1.5">
+                    <td className="px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-1.5">
                         <button
                           onClick={() =>
@@ -349,6 +387,13 @@ export default function ExpiryPage() {
           </div>
         )}
       </Panel>
+
+      {/* Purchase history popup (Enter / row click) */}
+      <PurchaseHistoryDialog
+        medicineId={purchaseItem?.id ?? null}
+        medicineName={purchaseItem?.name}
+        onClose={() => setPurchaseItem(null)}
+      />
 
       {/* Action Modal */}
       {actionModal && (
